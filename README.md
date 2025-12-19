@@ -200,6 +200,59 @@ if protobus.IsHandledError(err) {
 }
 ```
 
+## Examples
+
+### Calculator Service
+
+A basic calculator demonstrating RPC calls:
+
+```bash
+# Terminal 1: Start service
+go run examples/calculator/main.go service
+
+# Terminal 2: Run client
+go run examples/calculator/main.go client
+```
+
+### Combat Game
+
+A battle royale game demonstrating multiple services with different AI strategies:
+
+```bash
+go run examples/combat/...
+```
+
+Features 6 player strategies:
+- **Vindicator** - Shoots back at whoever attacked them
+- **Bully Hunter** - Targets the weakest player
+- **Giant Slayer** - Targets the strongest player
+- **Equalizer** - Targets players with similar health
+- **Wildcard** - Random target selection
+- **Terminator** - Focuses on one target until eliminated
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/getting-started.md) | Step-by-step guide to your first service |
+| [Architecture](docs/architecture.md) | System design and component overview |
+| [Configuration](docs/configuration.md) | Environment and connection settings |
+
+### API Reference
+
+| Component | Description |
+|-----------|-------------|
+| [Context](docs/api/context.md) | Connection and factory management |
+| [BaseService](docs/api/base-service.md) | Foundation for implementing services |
+| [RunnableService](docs/api/runnable-service.md) | Service with lifecycle management |
+| [ServiceProxy](docs/api/service-proxy.md) | Client for calling remote services |
+
+### Advanced Topics
+
+| Topic | Description |
+|-------|-------------|
+| [Error Handling](docs/advanced/error-handling.md) | HandledError, retries, and DLQ |
+
 ## Cross-Language Compatibility
 
 Services written in Go, TypeScript, and Python can communicate seamlessly:
