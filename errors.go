@@ -85,3 +85,19 @@ func (e *ReconnectionError) Error() string {
 func (e *ReconnectionError) Unwrap() error {
 	return e.LastErr
 }
+
+// Streaming-related errors. See docs/advanced/streaming.md.
+var (
+	// ErrStreamIdleTimeout is returned when no chunk arrives within the idle
+	// timeout. Streaming calls use an idle timeout, not a total-call timeout —
+	// a stream is permitted to take far longer than any single chunk gap.
+	ErrStreamIdleTimeout = errors.New("streaming idle timeout")
+
+	// ErrStreamClosed is returned when receiving from a stream that has
+	// already been closed (by Close(), connection loss, or terminal message).
+	ErrStreamClosed = errors.New("stream closed")
+
+	// ErrNotStreamingMethod is returned when calling OpenStream on a method
+	// the server did not register as streaming (or vice versa).
+	ErrNotStreamingMethod = errors.New("method not registered as streaming")
+)

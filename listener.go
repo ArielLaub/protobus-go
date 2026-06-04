@@ -15,7 +15,12 @@ type MessageHandler func(ctx context.Context, body []byte, correlationID string)
 
 // BaseListener provides common listener functionality.
 type BaseListener struct {
-	mu            sync.RWMutex
+	mu sync.RWMutex
+	// pubMu serializes writes to `channel`. amqp091-go's Channel is NOT safe
+	// for concurrent producer goroutines; streaming handlers publish many
+	// chunks from per-delivery goroutines, so we need a mutex around every
+	// reply-side publish to avoid interleaved frames on the wire.
+	pubMu         sync.Mutex
 	conn          *Connection
 	channel       *amqp.Channel
 	queue         amqp.Queue
@@ -129,6 +134,16 @@ func (l *BaseListener) handleDelivery(delivery amqp.Delivery) {
 	timeout := GetConfig().MessageProcessingTimeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// If this delivery has a ReplyTo, stash a stream sink on ctx so that
+	// server-streaming handlers (in service.runStream) can publish chunks
+	// via the listener's channel. Unary handlers ignore it — purely additive.
+	if delivery.ReplyTo != "" {
+		ctx = withStreamSink(ctx, &streamSink{
+			ReplyTo: delivery.ReplyTo,
+			Publish: l.publishStreamChunk,
+		})
+	}
 
 	response, err := l.handler(ctx, delivery.Body, delivery.CorrelationId)
 
@@ -257,8 +272,36 @@ func (l *BaseListener) sendReply(delivery amqp.Delivery, response []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	l.pubMu.Lock()
+	defer l.pubMu.Unlock()
 	if err := l.conn.Publish(ctx, l.channel, "", delivery.ReplyTo, msg); err != nil {
 		logError("Failed to send reply: %v", err)
+	}
+}
+
+// publishStreamChunk publishes a single chunk of a server-streaming reply.
+// Called by service.runStream's send callback for every chunk the handler
+// yields. The final chunk gets x-protobus-final=true; intermediate chunks
+// get x-protobus-final=false. Both carry x-protobus-seq for diagnostics.
+//
+// See docs/advanced/streaming.md for the wire protocol.
+func (l *BaseListener) publishStreamChunk(replyTo, correlationID string, body []byte, seq uint32, final bool) {
+	msg := amqp.Publishing{
+		Body:          body,
+		CorrelationId: correlationID,
+		Headers: amqp.Table{
+			HeaderProtobusFinal: final,
+			HeaderProtobusSeq:   int32(seq),
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	l.pubMu.Lock()
+	defer l.pubMu.Unlock()
+	if err := l.conn.Publish(ctx, l.channel, "", replyTo, msg); err != nil {
+		logError("Failed to publish stream chunk (seq=%d, final=%v): %v", seq, final, err)
 	}
 }
 

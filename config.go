@@ -23,7 +23,20 @@ type Config struct {
 
 	// DefaultRPCTimeout is the default timeout for RPC calls
 	DefaultRPCTimeout time.Duration
+
+	// StreamIdleTimeout is the idle timeout between chunks for streaming
+	// RPC calls. A streaming call returns ErrStreamIdleTimeout if no chunk
+	// arrives within this window. The standard RPC timeout does NOT apply
+	// to streams. See docs/advanced/streaming.md.
+	StreamIdleTimeout time.Duration
 }
+
+// Streaming wire-protocol header names. Identical to the TS and Python ports.
+// See docs/advanced/streaming.md for the wire protocol.
+const (
+	HeaderProtobusFinal = "x-protobus-final"
+	HeaderProtobusSeq   = "x-protobus-seq"
+)
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
@@ -32,6 +45,7 @@ func DefaultConfig() *Config {
 		EventsExchangeName:       getEnvOrDefault("PROTOBUS_EVENTS_EXCHANGE", "protobus.events"),
 		MessageProcessingTimeout: getDurationEnvOrDefault("PROTOBUS_MESSAGE_TIMEOUT", 30*time.Second),
 		DefaultRPCTimeout:        getDurationEnvOrDefault("PROTOBUS_RPC_TIMEOUT", 30*time.Second),
+		StreamIdleTimeout:        getDurationEnvOrDefault("PROTOBUS_STREAM_IDLE_TIMEOUT", 60*time.Second),
 	}
 }
 

@@ -32,10 +32,15 @@ type BaseService struct {
 	listener      *BaseListener
 	eventListener *BaseListener
 	handlers      map[string]MethodHandler
-	serviceName   string
-	protoFileName string
-	options       *ServiceOptions
-	initialized   bool
+	// streamHandlers registers server-streaming methods. A method may live
+	// in either `handlers` (unary) or `streamHandlers` (streaming) — never
+	// both. The framework dispatches onMessage based on which map contains
+	// the requested method name. See docs/advanced/streaming.md.
+	streamHandlers map[string]StreamingHandler
+	serviceName    string
+	protoFileName  string
+	options        *ServiceOptions
+	initialized    bool
 }
 
 // NewBaseService creates a new BaseService.
@@ -47,13 +52,14 @@ func NewBaseService(ctx *Context, serviceName, protoFileName string, options *Se
 	lateAck := options.MaxConcurrent > 0
 
 	return &BaseService{
-		ctx:           ctx,
-		serviceName:   serviceName,
-		protoFileName: protoFileName,
-		options:       options,
-		handlers:      make(map[string]MethodHandler),
-		listener:      NewBaseListener(ctx.Connection(), lateAck, options.MaxConcurrent, options.RetryOptions),
-		eventListener: NewBaseListener(ctx.Connection(), false, 0, nil),
+		ctx:            ctx,
+		serviceName:    serviceName,
+		protoFileName:  protoFileName,
+		options:        options,
+		handlers:       make(map[string]MethodHandler),
+		streamHandlers: make(map[string]StreamingHandler),
+		listener:       NewBaseListener(ctx.Connection(), lateAck, options.MaxConcurrent, options.RetryOptions),
+		eventListener:  NewBaseListener(ctx.Connection(), false, 0, nil),
 	}
 }
 
@@ -67,11 +73,23 @@ func (s *BaseService) ProtoFileName() string {
 	return s.protoFileName
 }
 
-// Handle registers a method handler.
+// Handle registers a unary method handler.
 func (s *BaseService) Handle(method string, handler MethodHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers[strings.ToLower(method)] = handler
+}
+
+// HandleStream registers a server-streaming method handler. The handler
+// produces zero or more response chunks via the `send` callback, then
+// returns. Returning an error terminates the stream with that error as
+// the terminal chunk's payload.
+//
+// See docs/advanced/streaming.md for the full contract and examples.
+func (s *BaseService) HandleStream(method string, handler StreamingHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamHandlers[strings.ToLower(method)] = handler
 }
 
 // RegisterHandlers uses reflection to auto-discover and register handlers.
@@ -207,10 +225,17 @@ func (s *BaseService) onMessage(ctx context.Context, body []byte, correlationID 
 	logDebug("Received request %s (%s)", request.Method, correlationID)
 
 	s.mu.RLock()
-	handler, exists := s.handlers[methodName]
+	streamHandler, isStream := s.streamHandlers[methodName]
+	handler, isUnary := s.handlers[methodName]
 	s.mu.RUnlock()
 
-	if !exists {
+	// Streaming path. Sentinel response signals the listener to consume
+	// chunks via the per-call stream sink installed on the listener.
+	if isStream {
+		return s.runStream(ctx, request, correlationID, streamHandler)
+	}
+
+	if !isUnary {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidMethod, methodName)
 	}
 
@@ -222,6 +247,90 @@ func (s *BaseService) onMessage(ctx context.Context, body []byte, correlationID 
 
 	logDebug("Sending result for %s", request.Method)
 	return s.ctx.Factory().BuildResponse(request.Method, result, nil)
+}
+
+// runStream drives a server-streaming handler. The handler emits chunks via
+// `send`, which the framework publishes individually as separate AMQP
+// messages on the reply queue with x-protobus-final / x-protobus-seq headers.
+//
+// Returning nil from this function (with no reply-bytes) signals onMessage's
+// caller to skip the unary reply path — we've already published everything
+// ourselves.
+func (s *BaseService) runStream(
+	ctx context.Context,
+	request *RequestContainer,
+	correlationID string,
+	handler StreamingHandler,
+) ([]byte, error) {
+	// The listener stashes the reply destination + publisher on ctx before
+	// dispatching. For streaming we publish many chunks to that one queue.
+	sink := streamSinkFromContext(ctx)
+	if sink == nil || sink.ReplyTo == "" {
+		// Request had no ReplyTo (one-way) — drain the handler for any
+		// side-effects but don't try to publish.
+		_ = handler(ctx, request.Data, request.Actor, correlationID,
+			func(map[string]interface{}) error { return nil })
+		return nil, nil
+	}
+	replyTo := sink.ReplyTo
+	sender := sink.Publish
+
+	// Look-ahead-by-one so we can mark the last chunk with x-protobus-final=true
+	// without an extra empty terminal message.
+	var (
+		seq      uint32
+		buffered map[string]interface{}
+		mu       sync.Mutex
+	)
+
+	send := func(chunk map[string]interface{}) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if buffered != nil {
+			body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
+			if err != nil {
+				return err
+			}
+			sender(replyTo, correlationID, body, seq, false)
+			seq++
+		}
+		buffered = chunk
+		return nil
+	}
+
+	handlerErr := handler(ctx, request.Data, request.Actor, correlationID, send)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if handlerErr != nil {
+		// Terminal error: flush any buffered chunk as non-final, then send
+		// the error as the final terminal.
+		if buffered != nil {
+			body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
+			if err == nil {
+				sender(replyTo, correlationID, body, seq, false)
+				seq++
+			}
+		}
+		body, _ := s.ctx.Factory().BuildResponse(request.Method, nil, handlerErr)
+		sender(replyTo, correlationID, body, seq, true)
+	} else if buffered != nil {
+		// Normal completion — last buffered chunk becomes final.
+		body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
+		if err != nil {
+			return nil, err
+		}
+		sender(replyTo, correlationID, body, seq, true)
+	} else {
+		// Empty stream — single terminal with an empty body so the client
+		// iterator ends cleanly without yielding a spurious chunk. Matches
+		// the Python and TS ports.
+		sender(replyTo, correlationID, []byte{}, 0, true)
+	}
+
+	// Returning (nil, nil) tells the listener not to publish a unary reply.
+	return nil, nil
 }
 
 func (s *BaseService) onEvent(ctx context.Context, body []byte, correlationID string) ([]byte, error) {

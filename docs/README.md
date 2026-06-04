@@ -17,6 +17,7 @@ Welcome to the protobus-go documentation. This guide covers everything you need 
 - [ServiceCluster](api/service-cluster.md) - Managing multiple service instances
 
 ### Advanced Topics
+- [Streaming RPC](advanced/streaming.md) - Server-streaming responses (`HandleStream` + `OpenStream`)
 - [Error Handling](advanced/error-handling.md) - HandledError and retries
 - [Custom Types](advanced/custom-types.md) - BigInt, Timestamp, and custom serialization
 

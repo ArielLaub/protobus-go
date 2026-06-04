@@ -21,6 +21,7 @@ Since Protobus uses standard Protobuf schemas and AMQP protocol, services writte
 ## Features
 
 - **RPC Communication**: Request-response pattern with `ServiceProxy.Call()`
+- **Server Streaming**: `HandleStream` + `OpenStream` for multi-chunk responses with `Recv()` ergonomics. See [streaming docs](docs/advanced/streaming.md).
 - **Event System**: Publish-subscribe with topic-based routing and wildcards
 - **Auto-Reconnection**: Exponential backoff with jitter for resilient connections
 - **Message Retry**: Automatic retry with dead-letter queue (DLQ) support
@@ -251,6 +252,7 @@ Features 6 player strategies:
 
 | Topic | Description |
 |-------|-------------|
+| [Streaming RPC](docs/advanced/streaming.md) | Server-streaming responses with `HandleStream` and `OpenStream` |
 | [Error Handling](docs/advanced/error-handling.md) | HandledError, retries, and DLQ |
 
 ## Cross-Language Compatibility
