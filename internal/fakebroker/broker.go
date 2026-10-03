@@ -27,7 +27,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/ArielLaub/protobus-go/internal/transport"
+	"github.com/ArielLaub/protobus-go/v2/internal/transport"
 )
 
 // ConfirmAction is the broker's answer to one publish.

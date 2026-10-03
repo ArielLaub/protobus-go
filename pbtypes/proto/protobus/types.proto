@@ -15,7 +15,7 @@
 // effect on what any port decodes.
 syntax = "proto3";
 
-option go_package = "github.com/ArielLaub/protobus-go/pbtypes";
+option go_package = "github.com/ArielLaub/protobus-go/v2/pbtypes";
 
 // An unsigned integer up to 2^256-1 (uint256-compatible), carried as exactly
 // 32 bytes, big-endian. Negative values and values that do not fit are

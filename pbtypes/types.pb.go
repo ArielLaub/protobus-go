@@ -141,7 +141,7 @@ const file_protobus_types_proto_rawDesc = "" +
 	"\x06_value\"0\n" +
 	"\ttimestamp\x12\x19\n" +
 	"\x05value\x18\x01 \x01(\x03H\x00R\x05value\x88\x01\x01B\b\n" +
-	"\x06_valueB*Z(github.com/ArielLaub/protobus-go/pbtypesb\x06proto3"
+	"\x06_valueB-Z+github.com/ArielLaub/protobus-go/v2/pbtypesb\x06proto3"
 
 var (
 	file_protobus_types_proto_rawDescOnce sync.Once

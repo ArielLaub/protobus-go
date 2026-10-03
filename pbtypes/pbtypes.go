@@ -13,7 +13,7 @@
 //	when := msg.GetAt().AsTime()
 package pbtypes
 
-//go:generate protoc -I proto --go_out=.. --go_opt=module=github.com/ArielLaub/protobus-go proto/protobus/types.proto
+//go:generate protoc -I proto --go_out=.. --go_opt=module=github.com/ArielLaub/protobus-go/v2 proto/protobus/types.proto
 
 import (
 	_ "embed"
