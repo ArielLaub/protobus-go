@@ -58,9 +58,9 @@ func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	log := o.log
-	if log == nil {
-		log = defaultLogger(nil)
+	log := defaultLogger(nil)
+	if o.log != nil {
+		log = o.log.With(slog.String("component", "protobus"))
 	}
 	dial := o.dialer
 	if dial == nil {

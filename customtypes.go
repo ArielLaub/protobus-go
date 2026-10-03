@@ -104,3 +104,12 @@ func unmarshal(b []byte, m proto.Message) error {
 	}
 	return checkCustomTypes(m)
 }
+
+// marshal encodes m after checking its custom types, so protobus never sends
+// a value every peer would refuse to decode.
+func marshal(m proto.Message) ([]byte, error) {
+	if err := checkCustomTypes(m); err != nil {
+		return nil, err
+	}
+	return proto.Marshal(m)
+}

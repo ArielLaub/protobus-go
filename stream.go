@@ -42,7 +42,7 @@ func (s *serverStream) SendMsg(m proto.Message) error {
 	if err := s.ctx.Err(); err != nil {
 		return fmt.Errorf("protobus: stream ended: %w", context.Cause(s.ctx))
 	}
-	data, err := proto.Marshal(m)
+	data, err := marshal(m)
 	if err != nil {
 		return fmt.Errorf("protobus: encoding a stream response of %s: %w", s.method, err)
 	}

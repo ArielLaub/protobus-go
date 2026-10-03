@@ -194,6 +194,18 @@ func (b *Broker) OpsOf(kind string) []Op {
 	return out
 }
 
+// DeleteQueue deletes a queue as an operator would; its consumers are
+// cancelled by the broker (basic.cancel).
+func (b *Broker) DeleteQueue(name string) {
+	b.mu.Lock()
+	var post []func()
+	if q, ok := b.queues[name]; ok {
+		b.deleteQueue(q, &post)
+	}
+	b.mu.Unlock()
+	run(post)
+}
+
 // HasQueue reports whether a queue exists.
 func (b *Broker) HasQueue(name string) bool {
 	b.mu.Lock()

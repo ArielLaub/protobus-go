@@ -498,7 +498,7 @@ func (s *Service) handle(ctx context.Context, d *amqp.Delivery, ctl *deliveryCon
 	}
 	var data []byte
 	if resp != nil {
-		if data, err = proto.Marshal(resp); err != nil {
+		if data, err = marshal(resp); err != nil {
 			return s.failure(ctx, env.Method, fmt.Errorf("encoding the response of %s: %w", env.Method, err))
 		}
 	}

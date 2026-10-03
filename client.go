@@ -62,7 +62,7 @@ func (c *Client) envelope(method string, in proto.Message, actor string) ([]byte
 	if c.err != nil {
 		return nil, c.err
 	}
-	data, err := proto.Marshal(in)
+	data, err := marshal(in)
 	if err != nil {
 		return nil, fmt.Errorf("%w for %s.%s: %w", ErrInvalidRequest, c.contract, method, err)
 	}

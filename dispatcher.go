@@ -70,21 +70,31 @@ func newDispatcher(b *Bus) *dispatcher {
 
 // declareCoreExchanges declares every exchange protobus publishes to.
 // Publishers declare what they publish to, so a client starting before any
-// service gets a working bus rather than a 404 that closes its channel.
-// The arguments are exactly those every port uses, so the redeclaration is
-// always equivalent.
-func declareCoreExchanges(ch transport.Channel, cfg Config) error {
+// service gets a working bus rather than a 404 that closes its channel. The
+// arguments are exactly those every port uses, so the redeclaration is always
+// equivalent.
+//
+// Each is declared on a channel of its own and best effort: a broker user
+// without configure permission on one (often the cancel exchange) still gets
+// a working bus, as with the other ports, which never declare from clients.
+func declareCoreExchanges(conn transport.Conn, cfg Config, log *slog.Logger) {
 	for _, ex := range []struct{ name, kind string }{
 		{cfg.BusExchange, "topic"},
 		{cfg.CallbacksExchange, "direct"},
 		{cfg.EventsExchange, "topic"},
 		{cfg.CancelExchange, "fanout"},
 	} {
-		if err := ch.ExchangeDeclare(ex.name, ex.kind, true, false, false, false, nil); err != nil {
-			return fmt.Errorf("declaring exchange %s: %w", ex.name, err)
+		ch, err := conn.Channel()
+		if err != nil {
+			return
 		}
+		if err := ch.ExchangeDeclare(ex.name, ex.kind, true, false, false, false, nil); err != nil {
+			log.LogAttrs(context.Background(), slog.LevelWarn, "could not declare exchange; continuing without declaring it",
+				attrOperation("declare"), attrExchange(ex.name), attrSafeError(err))
+			continue // the failure closed the channel
+		}
+		_ = ch.Close()
 	}
-	return nil
 }
 
 func (d *dispatcher) restoreTopology(ctx context.Context, conn transport.Conn) error {
@@ -95,13 +105,14 @@ func (d *dispatcher) restoreTopology(ctx context.Context, conn transport.Conn) e
 		return nil
 	}
 	cfg := d.bus.cfg
+	declareCoreExchanges(conn, cfg, d.bus.log)
 	ch, err := conn.Channel()
 	if err != nil {
 		return err
 	}
 	fail := func(err error) error { _ = ch.Close(); return err }
-	if err := declareCoreExchanges(ch, cfg); err != nil {
-		return fail(err)
+	if err := ch.ExchangeDeclare(cfg.CallbacksExchange, "direct", true, false, false, false, nil); err != nil {
+		return fail(fmt.Errorf("declaring exchange %s: %w", cfg.CallbacksExchange, err))
 	}
 	q, err := ch.QueueDeclare("", false, true, true, false, nil)
 	if err != nil {

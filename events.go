@@ -39,7 +39,7 @@ func (b *Bus) PublishEvent(ctx context.Context, msg proto.Message, opts ...Publi
 	if err := validateMessageID(o.messageID); err != nil {
 		return err
 	}
-	data, err := proto.Marshal(msg)
+	data, err := marshal(msg)
 	if err != nil {
 		return fmt.Errorf("%w: event %s: %w", ErrInvalidRequest, typ, err)
 	}
