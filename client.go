@@ -27,8 +27,9 @@ var (
 // A Client is cheap and safe for concurrent use.
 type Client struct {
 	bus      *Bus
-	contract string // the service as its .proto declares it, e.g. "Calc.Service"
-	runtime  string // the name its queue is bound under; contract unless instance-named
+	contract string                         // the service as its .proto declares it, e.g. "Calc.Service"
+	runtime  string                         // the name its queue is bound under; contract unless instance-named
+	sd       protoreflect.ServiceDescriptor // set by ResolveClient; nil for NewClient
 }
 
 // ClientOption configures a Client.
