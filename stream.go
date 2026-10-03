@@ -34,7 +34,7 @@ type serverStream struct {
 	done    bool
 }
 
-var errStreamFinished = errors.New("protobus: Send after the stream handler returned")
+var ErrStreamFinished = errors.New("protobus: Send after the stream handler returned")
 
 func (s *serverStream) Context() context.Context { return s.ctx }
 
@@ -52,7 +52,7 @@ func (s *serverStream) SendMsg(m proto.Message) error {
 	defer s.mu.Unlock()
 	switch {
 	case s.done:
-		return errStreamFinished
+		return ErrStreamFinished
 	case s.err != nil:
 		return s.err
 	}
@@ -77,8 +77,8 @@ func (s *serverStream) publish(body []byte, final bool) error {
 		return fmt.Errorf("protobus: stream ended: %w", ErrCancelled)
 	}
 	err := s.c.publishReply(s.pub, s.d, body, amqp.Table{
-		HeaderFinal: final,
-		HeaderSeq:   intHeader(s.seq),
+		headerFinal: final,
+		headerSeq:   intHeader(s.seq),
 	})
 	if err == nil {
 		s.seq++
@@ -125,7 +125,7 @@ func (c *consumer) serviceErrorBody(s *serverStream, err error) []byte {
 // fails the attempt like any other infrastructure error.
 func (s *Service) serveStream(ctx context.Context, d *amqp.Delivery, ctl *deliveryControl, method string, st StreamDesc, dec DecodeFunc) handlerResult {
 	ss := &serverStream{ctx: ctx, c: s.requests, pub: ctl.pub, d: d, method: method}
-	err := st.Handler(s.impl, ctx, dec, ss)
+	err := st.Handler(s.impl, ctx, dec, ss, s.streamIC)
 
 	var pe *payloadError
 	switch {

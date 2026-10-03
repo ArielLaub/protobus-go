@@ -46,54 +46,60 @@ func (UnimplementedCalcServer) Missing(context.Context, *testpb.AddRequest) (*te
 	return nil, ErrUnimplemented
 }
 
+// unaryMethod and streamMethod produce exactly the handler shape the
+// generator emits, including the interceptor path.
+func unaryMethod[In proto.Message](name string, newIn func() In, call func(CalcServer, context.Context, In) (proto.Message, error)) MethodDesc {
+	return MethodDesc{MethodName: name, Handler: func(srv any, ctx context.Context, dec DecodeFunc, ic UnaryServerInterceptor) (proto.Message, error) {
+		in := newIn()
+		if err := dec(in); err != nil {
+			return nil, err
+		}
+		if ic == nil {
+			return call(srv.(CalcServer), ctx, in)
+		}
+		info := &UnaryServerInfo{Server: srv, FullMethod: "Test.Calc." + name}
+		return ic(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+			return call(srv.(CalcServer), ctx, req.(In))
+		})
+	}}
+}
+
+func streamMethod[In proto.Message](name string, newIn func() In, call func(CalcServer, context.Context, In, RawServerStream) error) StreamDesc {
+	return StreamDesc{MethodName: name, Handler: func(srv any, ctx context.Context, dec DecodeFunc, stream RawServerStream, ic StreamServerInterceptor) error {
+		in := newIn()
+		if err := dec(in); err != nil {
+			return err
+		}
+		if ic == nil {
+			return call(srv.(CalcServer), ctx, in, stream)
+		}
+		info := &StreamServerInfo{Server: srv, FullMethod: "Test.Calc." + name}
+		return ic(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream RawServerStream) error {
+			return call(srv.(CalcServer), ctx, req.(In), stream)
+		})
+	}}
+}
+
 var calcServiceDesc = ServiceDesc{
 	ServiceName: "Test.Calc",
 	HandlerType: (*CalcServer)(nil),
 	Methods: []MethodDesc{
-		{MethodName: "add", Handler: func(srv any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
-			in := new(testpb.AddRequest)
-			if err := dec(in); err != nil {
-				return nil, err
-			}
-			return srv.(CalcServer).Add(ctx, in)
-		}},
-		{MethodName: "fail", Handler: func(srv any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
-			in := new(testpb.FailRequest)
-			if err := dec(in); err != nil {
-				return nil, err
-			}
-			return srv.(CalcServer).Fail(ctx, in)
-		}},
-		{MethodName: "slow", Handler: func(srv any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
-			in := new(testpb.SlowRequest)
-			if err := dec(in); err != nil {
-				return nil, err
-			}
-			return srv.(CalcServer).Slow(ctx, in)
-		}},
-		{MethodName: "echo", Handler: func(srv any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
-			in := new(testpb.Order)
-			if err := dec(in); err != nil {
-				return nil, err
-			}
-			return srv.(CalcServer).Echo(ctx, in)
-		}},
-		{MethodName: "missing", Handler: func(srv any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
-			in := new(testpb.AddRequest)
-			if err := dec(in); err != nil {
-				return nil, err
-			}
-			return srv.(CalcServer).Missing(ctx, in)
-		}},
+		unaryMethod("add", func() *testpb.AddRequest { return new(testpb.AddRequest) },
+			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) { return s.Add(ctx, in) }),
+		unaryMethod("fail", func() *testpb.FailRequest { return new(testpb.FailRequest) },
+			func(s CalcServer, ctx context.Context, in *testpb.FailRequest) (proto.Message, error) { return s.Fail(ctx, in) }),
+		unaryMethod("slow", func() *testpb.SlowRequest { return new(testpb.SlowRequest) },
+			func(s CalcServer, ctx context.Context, in *testpb.SlowRequest) (proto.Message, error) { return s.Slow(ctx, in) }),
+		unaryMethod("echo", func() *testpb.Order { return new(testpb.Order) },
+			func(s CalcServer, ctx context.Context, in *testpb.Order) (proto.Message, error) { return s.Echo(ctx, in) }),
+		unaryMethod("missing", func() *testpb.AddRequest { return new(testpb.AddRequest) },
+			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) { return s.Missing(ctx, in) }),
 	},
 	Streams: []StreamDesc{
-		{MethodName: "count", Handler: func(srv any, ctx context.Context, dec DecodeFunc, stream RawServerStream) error {
-			in := new(testpb.CountRequest)
-			if err := dec(in); err != nil {
-				return err
-			}
-			return srv.(CalcServer).Count(ctx, in, NewServerStream[*testpb.CountChunk](stream))
-		}},
+		streamMethod("count", func() *testpb.CountRequest { return new(testpb.CountRequest) },
+			func(s CalcServer, ctx context.Context, in *testpb.CountRequest, stream RawServerStream) error {
+				return s.Count(ctx, in, NewServerStream[*testpb.CountChunk](stream))
+			}),
 	},
 }
 

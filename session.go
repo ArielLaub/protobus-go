@@ -140,7 +140,7 @@ func (s *session) amqpConfig() amqp.Config {
 }
 
 func (s *session) dialOnce(ctx context.Context) (transport.Conn, error) {
-	s.log.LogAttrs(ctx, slog.LevelInfo, "connecting to bus", attrOperation("connect"), slog.String("url", RedactURL(s.url)))
+	s.log.LogAttrs(ctx, slog.LevelInfo, "connecting to bus", attrOperation("connect"), slog.String("url", redactURL(s.url)))
 	conn, err := s.dial(ctx, s.url, s.amqpConfig())
 	if err != nil {
 		// The client library's error may quote the URL; log only its class.

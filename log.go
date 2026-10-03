@@ -45,12 +45,12 @@ func defaultLogger(w io.Writer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})).With(slog.String("component", "protobus"))
 }
 
-// RedactURL returns a broker URL that is safe to log: the password is
+// redactURL returns a broker URL that is safe to log: the password is
 // replaced with *** and everything else that helps diagnose a connection
 // (scheme, user, host, port, vhost, parameters) is kept. Anything that does
 // not parse as an absolute URL is reported as <redacted>, since it may still
 // be a credential.
-func RedactURL(raw string) string {
+func redactURL(raw string) string {
 	if raw == "" {
 		return ""
 	}

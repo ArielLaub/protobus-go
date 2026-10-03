@@ -64,10 +64,10 @@ func TestStreamDeliversChunksInOrderWithFraming(t *testing.T) {
 	for i, f := range fs {
 		seq, ok := streamSeq(f.Headers)
 		if !ok || seq != int64(i) {
-			t.Errorf("frame %d seq %v", i, f.Headers[HeaderSeq])
+			t.Errorf("frame %d seq %v", i, f.Headers[headerSeq])
 		}
-		if final, isBool := f.Headers[HeaderFinal].(bool); !isBool || final != (i == 4) {
-			t.Errorf("frame %d final %#v", i, f.Headers[HeaderFinal])
+		if final, isBool := f.Headers[headerFinal].(bool); !isBool || final != (i == 4) {
+			t.Errorf("frame %d final %#v", i, f.Headers[headerFinal])
 		}
 		if f.ContentType != contentTypeOctetStream || f.DeliveryMode == amqp.Persistent {
 			t.Errorf("frame %d properties %q/%d", i, f.ContentType, f.DeliveryMode)
@@ -300,8 +300,8 @@ func TestStreamDetectsALostChunk(t *testing.T) {
 	b := fakebroker.New()
 	rawStreamer(t, b, func(d amqp.Delivery, m string) []amqp.Publishing {
 		return []amqp.Publishing{
-			frame(d, m, 0, amqp.Table{HeaderSeq: int8(0), HeaderFinal: false}),
-			frame(d, m, 2, amqp.Table{HeaderSeq: int8(2), HeaderFinal: true}),
+			frame(d, m, 0, amqp.Table{headerSeq: int8(0), headerFinal: false}),
+			frame(d, m, 2, amqp.Table{headerSeq: int8(2), headerFinal: true}),
 		}
 	})
 	bus := dialTest(t, b, fastConfig())
@@ -315,9 +315,9 @@ func TestStreamDropsDuplicateFrames(t *testing.T) {
 	b := fakebroker.New()
 	rawStreamer(t, b, func(d amqp.Delivery, m string) []amqp.Publishing {
 		return []amqp.Publishing{
-			frame(d, m, 0, amqp.Table{HeaderSeq: int16(0), HeaderFinal: false}),
-			frame(d, m, 0, amqp.Table{HeaderSeq: int32(0), HeaderFinal: false}),
-			frame(d, m, 1, amqp.Table{HeaderSeq: int64(1), HeaderFinal: "true"}),
+			frame(d, m, 0, amqp.Table{headerSeq: int16(0), headerFinal: false}),
+			frame(d, m, 0, amqp.Table{headerSeq: int32(0), headerFinal: false}),
+			frame(d, m, 1, amqp.Table{headerSeq: int64(1), headerFinal: "true"}),
 		}
 	})
 	bus := dialTest(t, b, fastConfig())
@@ -331,8 +331,8 @@ func TestStreamAcceptsAPeerThatSendsNoSequence(t *testing.T) {
 	b := fakebroker.New()
 	rawStreamer(t, b, func(d amqp.Delivery, m string) []amqp.Publishing {
 		return []amqp.Publishing{
-			frame(d, m, 0, amqp.Table{HeaderFinal: false}),
-			frame(d, m, 1, amqp.Table{HeaderFinal: int8(1)}),
+			frame(d, m, 0, amqp.Table{headerFinal: false}),
+			frame(d, m, 1, amqp.Table{headerFinal: int8(1)}),
 		}
 	})
 	bus := dialTest(t, b, fastConfig())
@@ -347,7 +347,7 @@ func TestStreamBackpressure(t *testing.T) {
 	rawStreamer(t, b, func(d amqp.Delivery, m string) []amqp.Publishing {
 		var out []amqp.Publishing
 		for i := range int32(20) {
-			out = append(out, frame(d, m, i, amqp.Table{HeaderSeq: i, HeaderFinal: i == 19}))
+			out = append(out, frame(d, m, i, amqp.Table{headerSeq: i, headerFinal: i == 19}))
 		}
 		return out
 	})
@@ -376,7 +376,7 @@ func TestStreamTotalAllowanceAcrossCalls(t *testing.T) {
 	rawStreamer(t, b, func(d amqp.Delivery, m string) []amqp.Publishing {
 		var out []amqp.Publishing
 		for i := range int32(10) {
-			out = append(out, frame(d, m, i, amqp.Table{HeaderSeq: i, HeaderFinal: i == 9}))
+			out = append(out, frame(d, m, i, amqp.Table{headerSeq: i, headerFinal: i == 9}))
 		}
 		return out
 	})

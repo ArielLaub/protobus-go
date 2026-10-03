@@ -153,7 +153,7 @@ func TestPriorityConstantsMatchTheOtherPorts(t *testing.T) {
 	if PriorityNormal != 0 || PriorityHigh != 1 || PriorityControl != 2 || RecommendedMaxPriority != 2 {
 		t.Fatal("priority levels must match protobus TS/Python Config")
 	}
-	if HeaderFinal != "x-protobus-final" || HeaderSeq != "x-protobus-seq" {
+	if headerFinal != "x-protobus-final" || headerSeq != "x-protobus-seq" {
 		t.Fatal("stream header names are wire protocol")
 	}
 }

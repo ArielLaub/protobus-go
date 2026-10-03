@@ -342,7 +342,7 @@ func goClientScenario(t *testing.T, bus *protobus.Bus, target string) {
 		}
 	})
 	t.Run("instance routing", func(t *testing.T) {
-		who, err := interop.NewCounterClient(bus, protobus.ForInstance("inst1")).Whoami(callCtx(t), &interop.Nothing{})
+		who, err := interop.NewCounterClient(bus, protobus.WithInstance("inst1")).Whoami(callCtx(t), &interop.Nothing{})
 		if err != nil || who.RoutingKey != "REQUEST.interop.Counter.inst1.whoami" {
 			t.Fatalf("%v %v", who, err)
 		}
@@ -357,7 +357,7 @@ func goClientScenario(t *testing.T, bus *protobus.Bus, target string) {
 		err = protobus.Subscribe(callCtx(t), l, func(_ context.Context, p *interop.Ping, _ protobus.EventInfo) error {
 			got <- p
 			return nil
-		}, protobus.OnTopic("EVENT.pong."+target))
+		}, protobus.WithTopic("EVENT.pong."+target))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,7 +450,7 @@ func TestMixedReplicasShareOneRetryLadder(t *testing.T) {
 	err = protobus.Subscribe(callCtx(t), l, func(_ context.Context, a *interop.Attempted, _ protobus.EventInfo) error {
 		attempts <- a
 		return nil
-	}, protobus.OnTopic("EVENT.attempted"))
+	}, protobus.WithTopic("EVENT.attempted"))
 	if err != nil {
 		t.Fatal(err)
 	}

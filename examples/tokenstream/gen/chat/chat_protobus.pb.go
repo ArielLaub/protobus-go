@@ -14,8 +14,9 @@ import (
 	protobus "github.com/ArielLaub/protobus-go/v2"
 )
 
-// This file requires protobus-go v2.
-var _ = protobus.Version
+// This is a compile-time assertion that the protobus-go library is new
+// enough for, and still supports, this generated code.
+const _ = protobus.SupportPackageIsVersion1
 
 // Assistant_ServiceName is the fully-qualified name of the Chat.Assistant service.
 const Assistant_ServiceName = "Chat.Assistant"
@@ -50,24 +51,36 @@ var Assistant_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "stats",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(StatsRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(AssistantServer).Stats(ctx, in)
+				if interceptor == nil {
+					return srv.(AssistantServer).Stats(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Chat.Assistant.stats"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(AssistantServer).Stats(ctx, req.(*StatsRequest))
+				})
 			},
 		},
 	},
 	Streams: []protobus.StreamDesc{
 		{
 			MethodName: "generate",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream) error {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream, interceptor protobus.StreamServerInterceptor) error {
 				in := new(GenerateRequest)
 				if err := dec(in); err != nil {
 					return err
 				}
-				return srv.(AssistantServer).Generate(ctx, in, protobus.NewServerStream[*Token](stream))
+				if interceptor == nil {
+					return srv.(AssistantServer).Generate(ctx, in, protobus.NewServerStream[*Token](stream))
+				}
+				info := &protobus.StreamServerInfo{Server: srv, FullMethod: "Chat.Assistant.generate"}
+				return interceptor(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream protobus.RawServerStream) error {
+					return srv.(AssistantServer).Generate(ctx, req.(*GenerateRequest), protobus.NewServerStream[*Token](stream))
+				})
 			},
 		},
 	},
@@ -91,7 +104,7 @@ type assistantClient struct {
 	c *protobus.Client
 }
 
-// NewAssistantClient returns a client for Chat.Assistant. Pass protobus.ForInstance
+// NewAssistantClient returns a client for Chat.Assistant. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewAssistantClient(bus *protobus.Bus, opts ...protobus.ClientOption) AssistantClient {
 	return &assistantClient{c: protobus.NewClient(bus, Assistant_ServiceName, opts...)}

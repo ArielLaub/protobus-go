@@ -13,8 +13,9 @@ import (
 	protobus "github.com/ArielLaub/protobus-go/v2"
 )
 
-// This file requires protobus-go v2.
-var _ = protobus.Version
+// This is a compile-time assertion that the protobus-go library is new
+// enough for, and still supports, this generated code.
+const _ = protobus.SupportPackageIsVersion1
 
 // Player_ServiceName is the fully-qualified name of the Combat.Player service.
 const Player_ServiceName = "Combat.Player"
@@ -55,32 +56,50 @@ var Player_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "shoot",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(ShootRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(PlayerServer).Shoot(ctx, in)
+				if interceptor == nil {
+					return srv.(PlayerServer).Shoot(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Combat.Player.shoot"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(PlayerServer).Shoot(ctx, req.(*ShootRequest))
+				})
 			},
 		},
 		{
 			MethodName: "initiateGame",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(InitiateGameRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(PlayerServer).InitiateGame(ctx, in)
+				if interceptor == nil {
+					return srv.(PlayerServer).InitiateGame(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Combat.Player.initiateGame"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(PlayerServer).InitiateGame(ctx, req.(*InitiateGameRequest))
+				})
 			},
 		},
 		{
 			MethodName: "getStatus",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(GetStatusRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(PlayerServer).GetStatus(ctx, in)
+				if interceptor == nil {
+					return srv.(PlayerServer).GetStatus(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Combat.Player.getStatus"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(PlayerServer).GetStatus(ctx, req.(*GetStatusRequest))
+				})
 			},
 		},
 	},
@@ -107,7 +126,7 @@ type playerClient struct {
 	c *protobus.Client
 }
 
-// NewPlayerClient returns a client for Combat.Player. Pass protobus.ForInstance
+// NewPlayerClient returns a client for Combat.Player. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewPlayerClient(bus *protobus.Bus, opts ...protobus.ClientOption) PlayerClient {
 	return &playerClient{c: protobus.NewClient(bus, Player_ServiceName, opts...)}

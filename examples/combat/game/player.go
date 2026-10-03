@@ -228,7 +228,7 @@ func (p *Player) takeTurn(ctx context.Context) {
 	}
 
 	p.log("%s shoots at %s!", p.Name(), target.Name)
-	shooter := combat.NewPlayerClient(p.bus, protobus.ForInstance(target.ID))
+	shooter := combat.NewPlayerClient(p.bus, protobus.WithInstance(target.ID))
 	res, err := shooter.Shoot(ctx, &combat.ShootRequest{ShooterId: p.ID}, protobus.WithActor(p.ID))
 	if err != nil {
 		p.log("%s failed to shoot: %v", p.Name(), err)

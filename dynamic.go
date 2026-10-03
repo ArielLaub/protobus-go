@@ -45,15 +45,18 @@ func (b *Bus) RegisterDynamic(service string, h DynamicHandlers, opts ...Service
 		if md == nil {
 			continue // Register reports it
 		}
-		input := md.Input()
+		input, full := md.Input(), string(md.FullName())
 		desc.Methods = append(desc.Methods, MethodDesc{
 			MethodName: name,
-			Handler: func(_ any, ctx context.Context, dec DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec DecodeFunc, ic UnaryServerInterceptor) (proto.Message, error) {
 				in := b.newMessage(input)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return handler(ctx, in)
+				if ic == nil {
+					return handler(ctx, in)
+				}
+				return ic(ctx, in, &UnaryServerInfo{Server: srv, FullMethod: full}, UnaryHandler(handler))
 			},
 		})
 	}
@@ -62,15 +65,21 @@ func (b *Bus) RegisterDynamic(service string, h DynamicHandlers, opts ...Service
 		if md == nil {
 			continue
 		}
-		input := md.Input()
+		input, full := md.Input(), string(md.FullName())
+		serve := func(ctx context.Context, req proto.Message, stream RawServerStream) error {
+			return handler(ctx, req, stream.SendMsg)
+		}
 		desc.Streams = append(desc.Streams, StreamDesc{
 			MethodName: name,
-			Handler: func(_ any, ctx context.Context, dec DecodeFunc, stream RawServerStream) error {
+			Handler: func(srv any, ctx context.Context, dec DecodeFunc, stream RawServerStream, ic StreamServerInterceptor) error {
 				in := b.newMessage(input)
 				if err := dec(in); err != nil {
 					return err
 				}
-				return handler(ctx, in, stream.SendMsg)
+				if ic == nil {
+					return serve(ctx, in, stream)
+				}
+				return ic(ctx, in, stream, &StreamServerInfo{Server: srv, FullMethod: full}, serve)
 			},
 		})
 	}

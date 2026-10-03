@@ -35,7 +35,8 @@ type EventInfo struct {
 	Redelivered   bool
 	// Attempt counts retry hops (with WithEventRetry): 0 for the first.
 	Attempt int
-	Headers amqp.Table
+	// Headers are the AMQP headers as delivered (a copy).
+	Headers map[string]any
 }
 
 // EventListener consumes events from one queue and runs the handlers whose
@@ -63,35 +64,16 @@ type subscription struct {
 	handle   func(ctx context.Context, ev *wire.Event, info EventInfo) error
 }
 
-// EventListenerOption configures a standalone EventListener.
-type EventListenerOption func(*eventListenerOptions)
-
-type eventListenerOptions struct {
-	concurrency int
-	retry       EventRetryPolicy
-}
-
-// WithListenerConcurrency sets how many events are handled at once. Default
-// Config.DefaultPrefetch.
-func WithListenerConcurrency(n int) EventListenerOption {
-	return func(o *eventListenerOptions) { o.concurrency = n }
-}
-
-// WithListenerRetry enables retries for a named listener; see WithEventRetry.
-func WithListenerRetry(p EventRetryPolicy) EventListenerOption {
-	return func(o *eventListenerOptions) { o.retry = p }
-}
-
 // NewEventListener returns an event listener on queue. A named queue is
 // durable and shared by every process listening under the name; an empty
 // name gives this process a private queue that disappears with its
 // connection (and cannot use retries). Subscribe, then Start.
 //
 // A Service has its own listener: Service.Events.
-func (b *Bus) NewEventListener(queue string, opts ...EventListenerOption) (*EventListener, error) {
-	o := eventListenerOptions{concurrency: b.cfg.DefaultPrefetch}
+func (b *Bus) NewEventListener(queue string, opts ...ListenerOption) (*EventListener, error) {
+	o := listenerOptions{concurrency: b.cfg.DefaultPrefetch}
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyListener(&o)
 	}
 	if o.concurrency < 1 || o.concurrency > 65535 {
 		return nil, fmt.Errorf("protobus: listener concurrency must be within 1..65535, got %d", o.concurrency)
@@ -208,18 +190,6 @@ func (l *EventListener) add(ctx context.Context, pattern string, s *subscription
 	return nil
 }
 
-// SubscribeOption configures one subscription.
-type SubscribeOption func(*subscribeOptions)
-
-type subscribeOptions struct{ topic string }
-
-// OnTopic subscribes to a topic pattern instead of the default
-// "EVENT.<type>". Patterns follow AMQP topic rules: '*' matches one word, '#'
-// zero or more.
-func OnTopic(pattern string) SubscribeOption {
-	return func(o *subscribeOptions) { o.topic = pattern }
-}
-
 // Subscribe runs handler for every event of type T delivered on the
 // listener's queue under the subscription's topic (default "EVENT.<T's full
 // name>"). An event of another type matching the same topic is skipped by
@@ -234,7 +204,7 @@ func Subscribe[T proto.Message](ctx context.Context, l *EventListener, handler f
 	name := zero.ProtoReflect().Descriptor().FullName()
 	o := subscribeOptions{topic: "EVENT." + string(name)}
 	for _, opt := range opts {
-		opt(&o)
+		opt.applySubscribe(&o)
 	}
 	s := &subscription{typeName: name, handle: func(ctx context.Context, ev *wire.Event, info EventInfo) error {
 		msg := newMessage[T]()
@@ -279,7 +249,7 @@ func (l *EventListener) handle(ctx context.Context, d *amqp.Delivery, _ *deliver
 	}
 	info := EventInfo{
 		Type: ev.Type, Topic: ev.Topic, RoutingKey: d.RoutingKey, MessageID: d.MessageId,
-		CorrelationID: d.CorrelationId, Redelivered: d.Redelivered, Attempt: retryCount(d.Headers), Headers: d.Headers,
+		CorrelationID: d.CorrelationId, Redelivered: d.Redelivered, Attempt: retryCount(d.Headers), Headers: copyHeaders(d.Headers),
 	}
 
 	l.mu.Lock()

@@ -544,7 +544,7 @@ func TestServiceOptionValidation(t *testing.T) {
 		"zero concurrency":      {WithMaxConcurrent(0)},
 		"negative retries":      {WithRetry(RetryPolicy{MaxRetries: -1})},
 		"retries without delay": {WithRetry(RetryPolicy{MaxRetries: 1})},
-		"dotted instance":       {AsInstance("a.b")},
+		"dotted instance":       {WithInstance("a.b")},
 		"event retry no delay":  {WithEventRetry(EventRetryPolicy{MaxRetries: 1})},
 	}
 	for name, opts := range bad {
@@ -642,12 +642,12 @@ func TestDispatchRejectsAForeignRoutingKey(t *testing.T) {
 func TestDispatchServesARuntimeNameOtherThanTheContract(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
-	startCalc(t, bus, newCalcImpl(), AsInstance("player6"))
+	startCalc(t, bus, newCalcImpl(), WithInstance("player6"))
 	info, ok := b.Queue("Test.Calc.player6")
 	if !ok || b.Bindings("proto.bus", info.Name)[0] != "REQUEST.Test.Calc.player6.*" {
 		t.Fatal("instance queue and binding")
 	}
-	out, err := newCalcClient(bus, ForInstance("player6")).Add(testCtx(t), &testpb.AddRequest{A: 3, B: 4})
+	out, err := newCalcClient(bus, WithInstance("player6")).Add(testCtx(t), &testpb.AddRequest{A: 3, B: 4})
 	if err != nil || out.Sum != 7 {
 		t.Fatalf("got %v %v", out, err)
 	}

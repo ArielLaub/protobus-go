@@ -81,7 +81,7 @@ func intHeader(n int64) any {
 // streamFinal reads x-protobus-final tolerantly: a boolean, a number (non-zero
 // is true) or the text "true"/"1". Absent means false.
 func streamFinal(h amqp.Table) bool {
-	switch v := h[HeaderFinal].(type) {
+	switch v := h[headerFinal].(type) {
 	case nil:
 		return false
 	case bool:
@@ -101,7 +101,7 @@ func streamFinal(h amqp.Table) bool {
 // manufacturing a violation: a peer predating the header is behaving
 // correctly.
 func streamSeq(h amqp.Table) (seq int64, ok bool) {
-	v, present := h[HeaderSeq]
+	v, present := h[headerSeq]
 	if !present {
 		return 0, false
 	}
@@ -137,4 +137,17 @@ func carriedProperties(d *amqp.Delivery) amqp.Publishing {
 		Type:            d.Type,
 		AppId:           d.AppId,
 	}
+}
+
+// copyHeaders gives handlers their own copy of the delivery headers, as a
+// plain map so the AMQP client library stays out of the public API.
+func copyHeaders(h amqp.Table) map[string]any {
+	if len(h) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(h))
+	for k, v := range h {
+		out[k] = v
+	}
+	return out
 }

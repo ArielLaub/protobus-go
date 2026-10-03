@@ -9,10 +9,20 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/compiler/protogen"
+
+	"github.com/ArielLaub/protobus-go/v2/internal/version"
 )
 
 // Version is stamped into generated files.
-const Version = "2.0.0"
+const Version = version.Version
+
+// Options tune the generated names.
+type Options struct {
+	// Infix is inserted after the service name in every generated identifier
+	// (with "Bus": CalcBusServer, RegisterCalcBusServer, NewCalcBusClient),
+	// so protobus bindings can live in the same package as gRPC ones.
+	Infix string
+}
 
 const (
 	// protobusImport is imported under an explicit name: protogen would name
@@ -23,6 +33,11 @@ const (
 // GenerateFile writes the bindings for file's services. It returns nil when
 // the file declares none.
 func GenerateFile(gen *protogen.Plugin, file *protogen.File) (*protogen.GeneratedFile, error) {
+	return GenerateFileWith(gen, file, Options{})
+}
+
+// GenerateFileWith is GenerateFile with options.
+func GenerateFileWith(gen *protogen.Plugin, file *protogen.File, opts Options) (*protogen.GeneratedFile, error) {
 	if len(file.Services) == 0 {
 		return nil, nil
 	}
@@ -74,11 +89,12 @@ func GenerateFile(gen *protogen.Plugin, file *protogen.File) (*protogen.Generate
 	g.P()
 	// The generated code targets these protobus APIs; fail the build early
 	// against an incompatible library rather than late with odd errors.
-	g.P("// This file requires protobus-go v2.")
-	g.P("var _ = ", "protobus.Version")
+	g.P("// This is a compile-time assertion that the protobus-go library is new")
+	g.P("// enough for, and still supports, this generated code.")
+	g.P("const _ = protobus.SupportPackageIsVersion1")
 	g.P()
 	for _, svc := range file.Services {
-		genService(g, svc)
+		genService(g, svc, opts)
 	}
 	return g, nil
 }
@@ -109,12 +125,14 @@ func comment(g *protogen.GeneratedFile, c protogen.Comments, fallback string) {
 		return
 	}
 	for _, line := range strings.Split(text, "\n") {
-		g.P("//", strings.TrimRight(" "+line, " "))
+		// protoc keeps the space after "//" in each line; keep exactly one.
+		line = strings.TrimPrefix(line, " ")
+		g.P(strings.TrimRight("// "+line, " "))
 	}
 }
 
-func genService(g *protogen.GeneratedFile, svc *protogen.Service) {
-	name := svc.GoName
+func genService(g *protogen.GeneratedFile, svc *protogen.Service, opts Options) {
+	name := svc.GoName + opts.Infix
 	full := string(svc.Desc.FullName())
 	serverIface := name + "Server"
 	clientIface := name + "Client"
@@ -168,13 +186,19 @@ func genService(g *protogen.GeneratedFile, svc *protogen.Service) {
 		}
 		g.P("{")
 		g.P("MethodName: ", fmt.Sprintf("%q", m.Desc.Name()), ",")
-		g.P("Handler: func(srv any, ctx ", "context.Context", ", dec ", "protobus.DecodeFunc", ") (",
-			"proto.Message", ", error) {")
-		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
+		in := g.QualifiedGoIdent(m.Input.GoIdent)
+		g.P("Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {")
+		g.P("in := new(", in, ")")
 		g.P("if err := dec(in); err != nil {")
 		g.P("return nil, err")
 		g.P("}")
+		g.P("if interceptor == nil {")
 		g.P("return srv.(", serverIface, ").", m.GoName, "(ctx, in)")
+		g.P("}")
+		g.P("info := &protobus.UnaryServerInfo{Server: srv, FullMethod: ", fmt.Sprintf("%q", m.Desc.FullName()), "}")
+		g.P("return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {")
+		g.P("return srv.(", serverIface, ").", m.GoName, "(ctx, req.(*", in, "))")
+		g.P("})")
 		g.P("},")
 		g.P("},")
 	}
@@ -186,14 +210,20 @@ func genService(g *protogen.GeneratedFile, svc *protogen.Service) {
 		}
 		g.P("{")
 		g.P("MethodName: ", fmt.Sprintf("%q", m.Desc.Name()), ",")
-		g.P("Handler: func(srv any, ctx ", "context.Context", ", dec ", "protobus.DecodeFunc",
-			", stream ", "protobus.RawServerStream", ") error {")
-		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
+		in := g.QualifiedGoIdent(m.Input.GoIdent)
+		out := g.QualifiedGoIdent(m.Output.GoIdent)
+		g.P("Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream, interceptor protobus.StreamServerInterceptor) error {")
+		g.P("in := new(", in, ")")
 		g.P("if err := dec(in); err != nil {")
 		g.P("return err")
 		g.P("}")
-		g.P("return srv.(", serverIface, ").", m.GoName, "(ctx, in, ", "protobus.NewServerStream",
-			"[*", g.QualifiedGoIdent(m.Output.GoIdent), "](stream))")
+		g.P("if interceptor == nil {")
+		g.P("return srv.(", serverIface, ").", m.GoName, "(ctx, in, protobus.NewServerStream[*", out, "](stream))")
+		g.P("}")
+		g.P("info := &protobus.StreamServerInfo{Server: srv, FullMethod: ", fmt.Sprintf("%q", m.Desc.FullName()), "}")
+		g.P("return interceptor(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream protobus.RawServerStream) error {")
+		g.P("return srv.(", serverIface, ").", m.GoName, "(ctx, req.(*", in, "), protobus.NewServerStream[*", out, "](stream))")
+		g.P("})")
 		g.P("},")
 		g.P("},")
 	}
@@ -227,7 +257,7 @@ func genService(g *protogen.GeneratedFile, svc *protogen.Service) {
 	g.P("c *", "protobus.Client")
 	g.P("}")
 	g.P()
-	g.P("// New", clientIface, " returns a client for ", full, ". Pass protobus.ForInstance")
+	g.P("// New", clientIface, " returns a client for ", full, ". Pass protobus.WithInstance")
 	g.P("// to address a named instance of the service.")
 	deprecated(g, dep)
 	g.P("func New", clientIface, "(bus *", "protobus.Bus", ", opts ...", "protobus.ClientOption",

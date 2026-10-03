@@ -37,18 +37,16 @@ type RetryPolicy struct {
 
 // DefaultRetryPolicy is the retry policy of the other ports: three retries,
 // five seconds apart.
-var DefaultRetryPolicy = RetryPolicy{MaxRetries: 3, Delay: 5 * time.Second}
+func DefaultRetryPolicy() RetryPolicy { return RetryPolicy{MaxRetries: 3, Delay: 5 * time.Second} }
 
-// EventRetryPolicy governs retries of a service's event subscriptions. It is
-// off by default: a failing event handler drops its event, so one poisonous
-// event cannot stall a subscriber.
+// EventRetryPolicy governs retries of event handlers (see WithEventRetry).
 type EventRetryPolicy struct {
+	// MaxRetries is the number of retries after the first attempt; 0 (the
+	// default) disables event retries.
 	MaxRetries int
-	Delay      time.Duration
+	// Delay is the event retry queue's message TTL; see RetryPolicy.Delay.
+	Delay time.Duration
 }
-
-// ServiceOption configures a Service.
-type ServiceOption func(*serviceOptions)
 
 type serviceOptions struct {
 	instance          string
@@ -59,32 +57,33 @@ type serviceOptions struct {
 	maxPriority       *uint8
 	eventRetry        EventRetryPolicy
 	eventConcurrency  int
+	unaryInterceptors []UnaryServerInterceptor
+	streamInterceptors []StreamServerInterceptor
 }
 
-// AsInstance serves the service under an instance name: its queue and
-// routing keys use "<service>.<instance>", so several instances of one
-// contract can run side by side and be addressed individually (ForInstance
-// on the client side).
-func AsInstance(name string) ServiceOption { return func(o *serviceOptions) { o.instance = name } }
+func serviceOpt(f func(*serviceOptions)) ServiceOption { return serviceOption{option{service: f}} }
 
 // WithMaxConcurrent sets how many requests the service handles at once: the
 // consumer's prefetch, each delivery on its own goroutine. Default 1.
-func WithMaxConcurrent(n int) ServiceOption { return func(o *serviceOptions) { o.maxConcurrent = n } }
+func WithMaxConcurrent(n int) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.maxConcurrent = n })
+}
 
-// WithRetry replaces DefaultRetryPolicy.
-func WithRetry(p RetryPolicy) ServiceOption { return func(o *serviceOptions) { o.retry = p } }
+// WithRetry replaces DefaultRetryPolicy. RetryPolicy{} disables retries and
+// the dead-letter queue.
+func WithRetry(p RetryPolicy) ServiceOption { return serviceOpt(func(o *serviceOptions) { o.retry = p }) }
 
 // WithEarlyAck acknowledges each request on arrival instead of after its
 // reply: at-most-once delivery, with no retries and no dead-letter queue. A
 // failure is still reported to the caller. Under early ack the broker applies
 // no prefetch, so WithMaxConcurrent bounds concurrency in-process instead.
-func WithEarlyAck() ServiceOption { return func(o *serviceOptions) { o.earlyAck = true } }
+func WithEarlyAck() ServiceOption { return serviceOpt(func(o *serviceOptions) { o.earlyAck = true }) }
 
 // WithProcessingTimeout replaces Config.ProcessingTimeout for this service's
 // unary methods. Streaming methods are bounded by their caller's idle timeout
 // and cancellation instead.
 func WithProcessingTimeout(d time.Duration) ServiceOption {
-	return func(o *serviceOptions) { o.processingTimeout = d }
+	return serviceOpt(func(o *serviceOptions) { o.processingTimeout = d })
 }
 
 // WithMaxPriority declares the service queue as a RabbitMQ priority queue with
@@ -95,20 +94,8 @@ func WithProcessingTimeout(d time.Duration) ServiceOption {
 // RabbitMQ fixes a queue's arguments at declaration, so adding or changing
 // this on an existing queue fails with PRECONDITION_FAILED until an operator
 // deletes the queue.
-func WithMaxPriority(n uint8) ServiceOption { return func(o *serviceOptions) { o.maxPriority = &n } }
-
-// WithEventRetry enables retries for the service's event subscriptions, with
-// a per-subscriber redelivery path so subscribers that succeeded are not
-// re-run. After MaxRetries the event goes to <service>.Events.DLQ, as does an
-// event whose handler returns a HandledError.
-func WithEventRetry(p EventRetryPolicy) ServiceOption {
-	return func(o *serviceOptions) { o.eventRetry = p }
-}
-
-// WithEventConcurrency sets how many events the service handles at once.
-// Default Config.DefaultPrefetch.
-func WithEventConcurrency(n int) ServiceOption {
-	return func(o *serviceOptions) { o.eventConcurrency = n }
+func WithMaxPriority(n uint8) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.maxPriority = &n })
 }
 
 // ErrUnknownService reports a ServiceDesc whose service is not in the file
@@ -124,8 +111,10 @@ type Service struct {
 	name     string // runtime name: the queue, and the REQUEST.<name>.* binding
 	opts     serviceOptions
 
-	unary   map[string]MethodDesc
-	streams map[string]StreamDesc
+	unary    map[string]MethodDesc
+	streams  map[string]StreamDesc
+	unaryIC  UnaryServerInterceptor
+	streamIC StreamServerInterceptor
 
 	requests *consumer
 
@@ -140,9 +129,9 @@ type Service struct {
 // Generated code calls it from Register<Service>Server; it can be used
 // directly with a hand-written ServiceDesc.
 func (b *Bus) Register(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Service, error) {
-	o := serviceOptions{maxConcurrent: 1, retry: DefaultRetryPolicy, eventConcurrency: b.cfg.DefaultPrefetch}
+	o := serviceOptions{maxConcurrent: 1, retry: DefaultRetryPolicy(), eventConcurrency: b.cfg.DefaultPrefetch}
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyService(&o)
 	}
 	if err := o.validate(); err != nil {
 		return nil, err
@@ -168,6 +157,7 @@ func (b *Bus) Register(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Ser
 	s := &Service{
 		bus: b, desc: desc, impl: impl, contract: sd, name: desc.ServiceName, opts: o,
 		unary: map[string]MethodDesc{}, streams: map[string]StreamDesc{},
+		unaryIC: chainUnary(o.unaryInterceptors), streamIC: chainStream(o.streamInterceptors),
 	}
 	if o.instance != "" {
 		s.name += "." + o.instance
@@ -212,8 +202,8 @@ func (o *serviceOptions) validate() error {
 	if o.processingTimeout < 0 {
 		return fmt.Errorf("protobus: negative processing timeout %v", o.processingTimeout)
 	}
-	if o.instance != "" && strings.ContainsAny(o.instance, ".*# ") {
-		return fmt.Errorf("protobus: instance name %q must be a single routing-key word", o.instance)
+	if err := validInstance(o.instance); err != nil {
+		return err
 	}
 	if p := o.maxPriority; p != nil {
 		if *p < 1 {
@@ -447,7 +437,7 @@ func (s *Service) handle(ctx context.Context, d *amqp.Delivery, ctl *deliveryCon
 
 	info := &CallInfo{
 		Method: env.Method, Actor: env.Actor, CorrelationID: d.CorrelationId, MessageID: d.MessageId,
-		RoutingKey: d.RoutingKey, Redelivered: d.Redelivered, Attempt: retryCount(d.Headers), Headers: d.Headers,
+		RoutingKey: d.RoutingKey, Redelivered: d.Redelivered, Attempt: retryCount(d.Headers), Headers: copyHeaders(d.Headers),
 	}
 	ctx = withCallInfo(ctx, info)
 	dec := func(m proto.Message) error {
@@ -469,7 +459,7 @@ func (s *Service) handle(ctx context.Context, d *amqp.Delivery, ctl *deliveryCon
 	if !ok {
 		return s.rejection(env.Method, "invalid service method "+method)
 	}
-	resp, err := m.Handler(s.impl, ctx, dec)
+	resp, err := m.Handler(s.impl, ctx, dec, s.unaryIC)
 	if err != nil {
 		return s.failure(ctx, env.Method, err)
 	}

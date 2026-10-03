@@ -13,8 +13,9 @@ import (
 	protobus "github.com/ArielLaub/protobus-go/v2"
 )
 
-// This file requires protobus-go v2.
-var _ = protobus.Version
+// This is a compile-time assertion that the protobus-go library is new
+// enough for, and still supports, this generated code.
+const _ = protobus.SupportPackageIsVersion1
 
 // Service_ServiceName is the fully-qualified name of the Calculator.Service service.
 const Service_ServiceName = "Calculator.Service"
@@ -49,22 +50,34 @@ var Service_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "add",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(AddRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(ServiceServer).Add(ctx, in)
+				if interceptor == nil {
+					return srv.(ServiceServer).Add(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Calculator.Service.add"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(ServiceServer).Add(ctx, req.(*AddRequest))
+				})
 			},
 		},
 		{
 			MethodName: "divide",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(DivideRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(ServiceServer).Divide(ctx, in)
+				if interceptor == nil {
+					return srv.(ServiceServer).Divide(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "Calculator.Service.divide"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(ServiceServer).Divide(ctx, req.(*DivideRequest))
+				})
 			},
 		},
 	},
@@ -89,7 +102,7 @@ type serviceClient struct {
 	c *protobus.Client
 }
 
-// NewServiceClient returns a client for Calculator.Service. Pass protobus.ForInstance
+// NewServiceClient returns a client for Calculator.Service. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewServiceClient(bus *protobus.Bus, opts ...protobus.ClientOption) ServiceClient {
 	return &serviceClient{c: protobus.NewClient(bus, Service_ServiceName, opts...)}

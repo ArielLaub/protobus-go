@@ -58,7 +58,7 @@ func TestEventPublishAndSubscribe(t *testing.T) {
 	if err := svc.Start(testCtx(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := bus.PublishEvent(testCtx(t), &testpb.OrderCreated{Id: "o1", Amount: pbtypes.BigintFromUint64(7)}, WithEventMessageID("evt-1")); err != nil {
+	if err := bus.PublishEvent(testCtx(t), &testpb.OrderCreated{Id: "o1", Amount: pbtypes.BigintFromUint64(7)}, WithMessageID("evt-1")); err != nil {
 		t.Fatal(err)
 	}
 	recvWithin(t, got.ch, 2*time.Second)
@@ -112,7 +112,7 @@ func TestEventWildcardsAndOrder(t *testing.T) {
 			mu.Unlock()
 			done <- struct{}{}
 			return nil
-		}, OnTopic(pattern))
+		}, WithTopic(pattern))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,8 +148,8 @@ func TestEventMatchesTheDeliveredRoutingKeyNotTheBodyTopic(t *testing.T) {
 	t.Cleanup(l.Close)
 	public := newReceived[*testpb.Ping]()
 	admin := newReceived[*testpb.Ping]()
-	_ = Subscribe(testCtx(t), l, public.handler(nil), OnTopic("PUBLIC.#"))
-	_ = Subscribe(testCtx(t), l, admin.handler(nil), OnTopic("ADMIN.#"))
+	_ = Subscribe(testCtx(t), l, public.handler(nil), WithTopic("PUBLIC.#"))
+	_ = Subscribe(testCtx(t), l, admin.handler(nil), WithTopic("ADMIN.#"))
 	_ = l.Start(testCtx(t))
 
 	data, _ := proto.Marshal(&testpb.Ping{Id: "x"})
@@ -174,8 +174,8 @@ func TestEventTypeMismatchIsSkipped(t *testing.T) {
 	t.Cleanup(l.Close)
 	pings := newReceived[*testpb.Ping]()
 	orders := newReceived[*testpb.OrderCreated]()
-	_ = Subscribe(testCtx(t), l, pings.handler(nil), OnTopic("shared"))
-	_ = Subscribe(testCtx(t), l, orders.handler(nil), OnTopic("shared"))
+	_ = Subscribe(testCtx(t), l, pings.handler(nil), WithTopic("shared"))
+	_ = Subscribe(testCtx(t), l, orders.handler(nil), WithTopic("shared"))
 	_ = l.Start(testCtx(t))
 	_ = bus.PublishEvent(testCtx(t), &testpb.Ping{Id: "p"}, WithTopic("shared"))
 	recvWithin(t, pings.ch, time.Second)
@@ -267,7 +267,7 @@ func TestEventRetryRedeliversOnlyToTheFailingSubscriber(t *testing.T) {
 	_ = Subscribe(testCtx(t), other, steady.handler(nil))
 	_ = other.Start(testCtx(t))
 
-	_ = bus.PublishEvent(testCtx(t), &testpb.OrderCreated{Id: "o"}, WithEventMessageID("evt-7"))
+	_ = bus.PublishEvent(testCtx(t), &testpb.OrderCreated{Id: "o"}, WithMessageID("evt-7"))
 	recvWithin(t, flaky.ch, time.Second)
 	recvWithin(t, flaky.ch, time.Second) // redelivered after the retry delay
 	recvWithin(t, steady.ch, time.Second)
@@ -292,7 +292,7 @@ func TestEventRetryRedeliversOnlyToTheFailingSubscriber(t *testing.T) {
 func TestEventRetryDeadLettersAfterMaxRetries(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
-	l, err := bus.NewEventListener("Sub.Events", WithListenerRetry(EventRetryPolicy{MaxRetries: 2, Delay: 10 * time.Millisecond}))
+	l, err := bus.NewEventListener("Sub.Events", WithEventRetry(EventRetryPolicy{MaxRetries: 2, Delay: 10 * time.Millisecond}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestEventRetryDeadLettersAfterMaxRetries(t *testing.T) {
 func TestEventHandledErrorGoesStraightToTheDLQWhenRetryIsOn(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
-	l, _ := bus.NewEventListener("Sub.Events", WithListenerRetry(EventRetryPolicy{MaxRetries: 5, Delay: 10 * time.Millisecond}))
+	l, _ := bus.NewEventListener("Sub.Events", WithEventRetry(EventRetryPolicy{MaxRetries: 5, Delay: 10 * time.Millisecond}))
 	t.Cleanup(l.Close)
 	got := newReceived[*testpb.Ping]()
 	_ = Subscribe(testCtx(t), l, got.handler(func(*testpb.Ping) error { return NewHandledError("POISON", "refused") }))
@@ -332,7 +332,7 @@ func TestEventHandledErrorGoesStraightToTheDLQWhenRetryIsOn(t *testing.T) {
 func TestEventRetryNeedsANamedQueue(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
-	if _, err := bus.NewEventListener("", WithListenerRetry(EventRetryPolicy{MaxRetries: 1, Delay: time.Second})); err == nil {
+	if _, err := bus.NewEventListener("", WithEventRetry(EventRetryPolicy{MaxRetries: 1, Delay: time.Second})); err == nil {
 		t.Fatal("expected an error")
 	}
 }
@@ -340,7 +340,7 @@ func TestEventRetryNeedsANamedQueue(t *testing.T) {
 func TestEventListenerHandlesInParallel(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
-	l, _ := bus.NewEventListener("Par.Events", WithListenerConcurrency(4))
+	l, _ := bus.NewEventListener("Par.Events", WithEventConcurrency(4))
 	t.Cleanup(l.Close)
 	var running, peak atomic.Int32
 	done := make(chan struct{}, 8)

@@ -14,25 +14,6 @@ import (
 	"github.com/ArielLaub/protobus-go/v2/internal/wire"
 )
 
-// PublishOption configures one event publish.
-type PublishOption func(*publishOptions)
-
-type publishOptions struct {
-	topic     string
-	messageID *string
-}
-
-// WithTopic publishes under topic instead of the default "EVENT.<type>".
-func WithTopic(topic string) PublishOption {
-	return func(o *publishOptions) { o.topic = topic }
-}
-
-// WithEventMessageID sets the event's message id, for deduplication by
-// subscribers. The same rules as WithMessageID apply.
-func WithEventMessageID(id string) PublishOption {
-	return func(o *publishOptions) { o.messageID = &id }
-}
-
 // EventTopic is the default topic of an event type: "EVENT.<full name>".
 func EventTopic(msg proto.Message) string {
 	return "EVENT." + string(proto.MessageName(msg))
@@ -46,7 +27,7 @@ func EventTopic(msg proto.Message) string {
 func (b *Bus) PublishEvent(ctx context.Context, msg proto.Message, opts ...PublishOption) error {
 	var o publishOptions
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyPublish(&o)
 	}
 	typ := string(proto.MessageName(msg))
 	if typ == "" {
@@ -55,8 +36,7 @@ func (b *Bus) PublishEvent(ctx context.Context, msg proto.Message, opts ...Publi
 	if o.topic == "" {
 		o.topic = "EVENT." + typ
 	}
-	co := callOptions{messageID: o.messageID}
-	if err := co.validate(); err != nil {
+	if err := validateMessageID(o.messageID); err != nil {
 		return err
 	}
 	data, err := proto.Marshal(msg)

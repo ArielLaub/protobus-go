@@ -30,30 +30,24 @@ type Client struct {
 	contract string                         // the service as its .proto declares it, e.g. "Calc.Service"
 	runtime  string                         // the name its queue is bound under; contract unless instance-named
 	sd       protoreflect.ServiceDescriptor // set by ResolveClient; nil for NewClient
-}
-
-// ClientOption configures a Client.
-type ClientOption func(*Client)
-
-// ForInstance addresses one named instance of a service, as served with
-// the service option of the same name: the request routes to
-// REQUEST.<service>.<instance>.<method> while the envelope still names the
-// contract method, which is what the instance validates against.
-func ForInstance(instance string) ClientOption {
-	return func(c *Client) {
-		if instance != "" {
-			c.runtime = c.contract + "." + instance
-		}
-	}
+	err      error                          // a configuration error, reported by every call
 }
 
 // NewClient returns a client for service, the fully-qualified name its .proto
 // declares ("<package>.<Service>").
+//
+// An invalid option (an instance name that is not one routing-key word) is
+// reported by every call the client makes.
 func NewClient(bus *Bus, service string, opts ...ClientOption) *Client {
-	c := &Client{bus: bus, contract: service, runtime: service}
-	for _, o := range opts {
-		o(c)
+	var o clientOptions
+	for _, opt := range opts {
+		opt.applyClient(&o)
 	}
+	c := &Client{bus: bus, contract: service, runtime: service}
+	if o.instance != "" {
+		c.runtime = service + "." + o.instance
+	}
+	c.err = validInstance(o.instance)
 	return c
 }
 
@@ -65,6 +59,9 @@ func (c *Client) routingKey(method string) string {
 }
 
 func (c *Client) envelope(method string, in proto.Message, actor string) ([]byte, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
 	data, err := proto.Marshal(in)
 	if err != nil {
 		return nil, fmt.Errorf("%w for %s.%s: %w", ErrInvalidRequest, c.contract, method, err)

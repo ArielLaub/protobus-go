@@ -11,7 +11,7 @@ import (
 	"github.com/ArielLaub/protobus-go/v2/internal/testpb"
 )
 
-func reconnected(t *testing.T) (Option, func()) {
+func reconnected(t *testing.T) (DialOption, func()) {
 	t.Helper()
 	ch := make(chan ConnectionEvent, 64)
 	return WithConnectionObserver(func(e ConnectionEvent) { ch <- e }), func() {

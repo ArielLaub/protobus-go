@@ -47,11 +47,11 @@ func config() protobus.Config {
 	return c
 }
 
-func dial(t *testing.T, url string, opts ...protobus.Option) *protobus.Bus {
+func dial(t *testing.T, url string, opts ...protobus.DialOption) *protobus.Bus {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	opts = append([]protobus.Option{protobus.WithConfig(config()), protobus.WithLogger(logger())}, opts...)
+	opts = append([]protobus.DialOption{protobus.WithConfig(config()), protobus.WithLogger(logger())}, opts...)
 	bus, err := protobus.Dial(ctx, url, opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -481,10 +481,10 @@ func TestStopConsumingLeavesTheQueueToOthers(t *testing.T) {
 func TestInstanceNamesRouteIndividually(t *testing.T) {
 	vh := brokertest.Require(t).NewVHost(t)
 	bus := dial(t, vh.URL())
-	serve(t, bus, newCalc(), protobus.AsInstance("i1"))
-	serve(t, bus, newCalc(), protobus.AsInstance("i2"))
+	serve(t, bus, newCalc(), protobus.WithInstance("i1"))
+	serve(t, bus, newCalc(), protobus.WithInstance("i2"))
 	for _, inst := range []string{"i1", "i2"} {
-		if _, err := gentest.NewCalcClient(bus, protobus.ForInstance(inst)).Add(ctx(t), &gentest.AddRequest{}); err != nil {
+		if _, err := gentest.NewCalcClient(bus, protobus.WithInstance(inst)).Add(ctx(t), &gentest.AddRequest{}); err != nil {
 			t.Fatalf("%s: %v", inst, err)
 		}
 	}

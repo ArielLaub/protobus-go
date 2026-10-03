@@ -18,8 +18,9 @@ import (
 	protobus "github.com/ArielLaub/protobus-go/v2"
 )
 
-// This file requires protobus-go v2.
-var _ = protobus.Version
+// This is a compile-time assertion that the protobus-go library is new
+// enough for, and still supports, this generated code.
+const _ = protobus.SupportPackageIsVersion1
 
 // Calc_ServiceName is the fully-qualified name of the GenTest.Calc service.
 const Calc_ServiceName = "GenTest.Calc"
@@ -78,64 +79,100 @@ var Calc_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "add",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(AddRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CalcServer).Add(ctx, in)
+				if interceptor == nil {
+					return srv.(CalcServer).Add(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "GenTest.Calc.add"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CalcServer).Add(ctx, req.(*AddRequest))
+				})
 			},
 		},
 		{
 			MethodName: "double",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(pbtypes.Bigint)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CalcServer).Double(ctx, in)
+				if interceptor == nil {
+					return srv.(CalcServer).Double(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "GenTest.Calc.double"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CalcServer).Double(ctx, req.(*pbtypes.Bigint))
+				})
 			},
 		},
 		{
 			MethodName: "unimplemented",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(AddRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CalcServer).Unimplemented(ctx, in)
+				if interceptor == nil {
+					return srv.(CalcServer).Unimplemented(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "GenTest.Calc.unimplemented"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CalcServer).Unimplemented(ctx, req.(*AddRequest))
+				})
 			},
 		},
 		{
 			MethodName: "fail",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(FailRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CalcServer).Fail(ctx, in)
+				if interceptor == nil {
+					return srv.(CalcServer).Fail(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "GenTest.Calc.fail"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CalcServer).Fail(ctx, req.(*FailRequest))
+				})
 			},
 		},
 		{
 			MethodName: "slow",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(SlowRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CalcServer).Slow(ctx, in)
+				if interceptor == nil {
+					return srv.(CalcServer).Slow(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "GenTest.Calc.slow"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CalcServer).Slow(ctx, req.(*SlowRequest))
+				})
 			},
 		},
 	},
 	Streams: []protobus.StreamDesc{
 		{
 			MethodName: "count",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream) error {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream, interceptor protobus.StreamServerInterceptor) error {
 				in := new(CountRequest)
 				if err := dec(in); err != nil {
 					return err
 				}
-				return srv.(CalcServer).Count(ctx, in, protobus.NewServerStream[*CountChunk](stream))
+				if interceptor == nil {
+					return srv.(CalcServer).Count(ctx, in, protobus.NewServerStream[*CountChunk](stream))
+				}
+				info := &protobus.StreamServerInfo{Server: srv, FullMethod: "GenTest.Calc.count"}
+				return interceptor(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream protobus.RawServerStream) error {
+					return srv.(CalcServer).Count(ctx, req.(*CountRequest), protobus.NewServerStream[*CountChunk](stream))
+				})
 			},
 		},
 	},
@@ -167,7 +204,7 @@ type calcClient struct {
 	c *protobus.Client
 }
 
-// NewCalcClient returns a client for GenTest.Calc. Pass protobus.ForInstance
+// NewCalcClient returns a client for GenTest.Calc. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewCalcClient(bus *protobus.Bus, opts ...protobus.ClientOption) CalcClient {
 	return &calcClient{c: protobus.NewClient(bus, Calc_ServiceName, opts...)}
@@ -247,12 +284,18 @@ var Ticker_ServiceDesc = protobus.ServiceDesc{
 	Streams: []protobus.StreamDesc{
 		{
 			MethodName: "tick",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream) error {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream, interceptor protobus.StreamServerInterceptor) error {
 				in := new(CountRequest)
 				if err := dec(in); err != nil {
 					return err
 				}
-				return srv.(TickerServer).Tick(ctx, in, protobus.NewServerStream[*CountChunk](stream))
+				if interceptor == nil {
+					return srv.(TickerServer).Tick(ctx, in, protobus.NewServerStream[*CountChunk](stream))
+				}
+				info := &protobus.StreamServerInfo{Server: srv, FullMethod: "GenTest.Ticker.tick"}
+				return interceptor(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream protobus.RawServerStream) error {
+					return srv.(TickerServer).Tick(ctx, req.(*CountRequest), protobus.NewServerStream[*CountChunk](stream))
+				})
 			},
 		},
 	},
@@ -278,7 +321,7 @@ type tickerClient struct {
 	c *protobus.Client
 }
 
-// NewTickerClient returns a client for GenTest.Ticker. Pass protobus.ForInstance
+// NewTickerClient returns a client for GenTest.Ticker. Pass protobus.WithInstance
 // to address a named instance of the service.
 //
 // Deprecated: Do not use.

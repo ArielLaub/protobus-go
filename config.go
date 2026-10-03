@@ -29,8 +29,8 @@ const (
 
 // Headers of the server-streaming wire protocol.
 const (
-	HeaderFinal = "x-protobus-final"
-	HeaderSeq   = "x-protobus-seq"
+	headerFinal = "x-protobus-final"
+	headerSeq   = "x-protobus-seq"
 )
 
 // ReconnectPolicy shapes automatic reconnection after the broker connection is

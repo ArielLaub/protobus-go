@@ -18,9 +18,9 @@ func TestRedactURL(t *testing.T) {
 		"":                                      "",
 	}
 	for in, want := range cases {
-		got := RedactURL(in)
+		got := redactURL(in)
 		if got != want {
-			t.Errorf("RedactURL(%q) = %q, want %q", in, got, want)
+			t.Errorf("redactURL(%q) = %q, want %q", in, got, want)
 		}
 		if strings.Contains(got, "s3cret") {
 			t.Errorf("password leaked: %q", got)

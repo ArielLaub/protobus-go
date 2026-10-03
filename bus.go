@@ -47,10 +47,10 @@ type Bus struct {
 // connection is re-established automatically (see Config.Reconnect).
 //
 // Without WithConfig the configuration comes from ConfigFromEnv.
-func Dial(ctx context.Context, url string, opts ...Option) (*Bus, error) {
-	var o busOptions
+func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
+	var o dialOptions
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyDial(&o)
 	}
 	cfg := ConfigFromEnv()
 	if o.cfg != nil {

@@ -19,9 +19,9 @@ import (
 	"github.com/ArielLaub/protobus-go/v2/internal/wire"
 )
 
-func dialTest(t *testing.T, b *fakebroker.Broker, cfg Config, opts ...Option) *Bus {
+func dialTest(t *testing.T, b *fakebroker.Broker, cfg Config, opts ...DialOption) *Bus {
 	t.Helper()
-	opts = append([]Option{WithConfig(cfg), WithLogger(testLogger(t)), withDialer(b.Dial)}, opts...)
+	opts = append([]DialOption{WithConfig(cfg), WithLogger(testLogger(t)), withDialer(b.Dial)}, opts...)
 	bus, err := Dial(testCtx(t), "amqp://guest:guest@fake/", opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestInvokeInstanceName(t *testing.T) {
 	r := newResponder(t, b, "Test.Calc.i7", "REQUEST.Test.Calc.i7.*", adder)
 	bus := dialTest(t, b, fastConfig())
 	var out testpb.AddResponse
-	if err := NewClient(bus, "Test.Calc", ForInstance("i7")).Invoke(testCtx(t), "add", &testpb.AddRequest{A: 1, B: 1}, &out); err != nil {
+	if err := NewClient(bus, "Test.Calc", WithInstance("i7")).Invoke(testCtx(t), "add", &testpb.AddRequest{A: 1, B: 1}, &out); err != nil {
 		t.Fatal(err)
 	}
 	d := r.deliveries()[0]

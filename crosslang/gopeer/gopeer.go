@@ -159,7 +159,7 @@ func Serve(ctx context.Context, bus *protobus.Bus) ([]*protobus.Service, error) 
 	if err := add(interop.RegisterCounterServer(bus, c)); err != nil {
 		return nil, err
 	}
-	if err := add(interop.RegisterCounterServer(bus, c, protobus.AsInstance("inst1"))); err != nil {
+	if err := add(interop.RegisterCounterServer(bus, c, protobus.WithInstance("inst1"))); err != nil {
 		return nil, err
 	}
 	if err := add(interop.RegisterWalletServer(bus, wallet{}, protobus.WithRetry(protobus.RetryPolicy{}))); err != nil {
@@ -171,7 +171,7 @@ func Serve(ctx context.Context, bus *protobus.Bus) ([]*protobus.Service, error) 
 	listener, err := interop.RegisterListenerServer(bus, struct {
 		interop.UnimplementedListenerServer
 	}{},
-		protobus.AsInstance(Lang), protobus.WithRetry(protobus.RetryPolicy{}))
+		protobus.WithInstance(Lang), protobus.WithRetry(protobus.RetryPolicy{}))
 	if err := add(listener, err); err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func Serve(ctx context.Context, bus *protobus.Bus) ([]*protobus.Service, error) 
 			return err
 		}
 		return bus.PublishEvent(ctx, &interop.Ping{Id: "pong:" + p.Id, N: next, From: Lang}, protobus.WithTopic("EVENT.pong."+Lang))
-	}, protobus.OnTopic("EVENT.ping."+Lang))
+	}, protobus.WithTopic("EVENT.ping."+Lang))
 	if err != nil {
 		return nil, err
 	}

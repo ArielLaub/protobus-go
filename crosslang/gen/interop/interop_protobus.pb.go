@@ -14,8 +14,9 @@ import (
 	protobus "github.com/ArielLaub/protobus-go/v2"
 )
 
-// This file requires protobus-go v2.
-var _ = protobus.Version
+// This is a compile-time assertion that the protobus-go library is new
+// enough for, and still supports, this generated code.
+const _ = protobus.SupportPackageIsVersion1
 
 // Counter_ServiceName is the fully-qualified name of the interop.Counter service.
 const Counter_ServiceName = "interop.Counter"
@@ -31,7 +32,7 @@ type CounterServer interface {
 	// Tick serves the tick method.
 	Tick(context.Context, *TickRequest, protobus.ServerStream[*Tick]) error
 	// What the last tick stream's producer did, so a caller can see a
-	//  cancellation reached it.
+	// cancellation reached it.
 	Produced(context.Context, *Nothing) (*Produced, error)
 	// Whoami serves the whoami method.
 	Whoami(context.Context, *Nothing) (*Who, error)
@@ -69,54 +70,84 @@ var Counter_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "add",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(AddRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CounterServer).Add(ctx, in)
+				if interceptor == nil {
+					return srv.(CounterServer).Add(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Counter.add"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CounterServer).Add(ctx, req.(*AddRequest))
+				})
 			},
 		},
 		{
 			MethodName: "produced",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(Nothing)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CounterServer).Produced(ctx, in)
+				if interceptor == nil {
+					return srv.(CounterServer).Produced(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Counter.produced"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CounterServer).Produced(ctx, req.(*Nothing))
+				})
 			},
 		},
 		{
 			MethodName: "whoami",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(Nothing)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CounterServer).Whoami(ctx, in)
+				if interceptor == nil {
+					return srv.(CounterServer).Whoami(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Counter.whoami"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CounterServer).Whoami(ctx, req.(*Nothing))
+				})
 			},
 		},
 		{
 			MethodName: "unimplemented",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(Nothing)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(CounterServer).Unimplemented(ctx, in)
+				if interceptor == nil {
+					return srv.(CounterServer).Unimplemented(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Counter.unimplemented"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(CounterServer).Unimplemented(ctx, req.(*Nothing))
+				})
 			},
 		},
 	},
 	Streams: []protobus.StreamDesc{
 		{
 			MethodName: "tick",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream) error {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, stream protobus.RawServerStream, interceptor protobus.StreamServerInterceptor) error {
 				in := new(TickRequest)
 				if err := dec(in); err != nil {
 					return err
 				}
-				return srv.(CounterServer).Tick(ctx, in, protobus.NewServerStream[*Tick](stream))
+				if interceptor == nil {
+					return srv.(CounterServer).Tick(ctx, in, protobus.NewServerStream[*Tick](stream))
+				}
+				info := &protobus.StreamServerInfo{Server: srv, FullMethod: "interop.Counter.tick"}
+				return interceptor(ctx, in, stream, info, func(ctx context.Context, req proto.Message, stream protobus.RawServerStream) error {
+					return srv.(CounterServer).Tick(ctx, req.(*TickRequest), protobus.NewServerStream[*Tick](stream))
+				})
 			},
 		},
 	},
@@ -135,7 +166,7 @@ type CounterClient interface {
 	// Tick calls the tick method.
 	Tick(ctx context.Context, in *TickRequest, opts ...protobus.StreamOption) iter.Seq2[*Tick, error]
 	// What the last tick stream's producer did, so a caller can see a
-	//  cancellation reached it.
+	// cancellation reached it.
 	Produced(ctx context.Context, in *Nothing, opts ...protobus.CallOption) (*Produced, error)
 	// Whoami calls the whoami method.
 	Whoami(ctx context.Context, in *Nothing, opts ...protobus.CallOption) (*Who, error)
@@ -147,7 +178,7 @@ type counterClient struct {
 	c *protobus.Client
 }
 
-// NewCounterClient returns a client for interop.Counter. Pass protobus.ForInstance
+// NewCounterClient returns a client for interop.Counter. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewCounterClient(bus *protobus.Bus, opts ...protobus.ClientOption) CounterClient {
 	return &counterClient{c: protobus.NewClient(bus, Counter_ServiceName, opts...)}
@@ -222,22 +253,34 @@ var Wallet_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "balance",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(Query)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(WalletServer).Balance(ctx, in)
+				if interceptor == nil {
+					return srv.(WalletServer).Balance(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Wallet.balance"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(WalletServer).Balance(ctx, req.(*Query))
+				})
 			},
 		},
 		{
 			MethodName: "echo",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(Balance)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(WalletServer).Echo(ctx, in)
+				if interceptor == nil {
+					return srv.(WalletServer).Echo(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Wallet.echo"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(WalletServer).Echo(ctx, req.(*Balance))
+				})
 			},
 		},
 	},
@@ -262,7 +305,7 @@ type walletClient struct {
 	c *protobus.Client
 }
 
-// NewWalletClient returns a client for interop.Wallet. Pass protobus.ForInstance
+// NewWalletClient returns a client for interop.Wallet. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewWalletClient(bus *protobus.Bus, opts ...protobus.ClientOption) WalletClient {
 	return &walletClient{c: protobus.NewClient(bus, Wallet_ServiceName, opts...)}
@@ -288,8 +331,7 @@ func (c *walletClient) Echo(ctx context.Context, in *Balance, opts ...protobus.C
 const Flaky_ServiceName = "interop.Flaky"
 
 // Replicas in several languages share this service's queue and retry ladder.
-//
-//	fail always fails, after announcing the attempt as an event.
+// fail always fails, after announcing the attempt as an event.
 //
 // Implementations should embed UnimplementedFlakyServer so that adding a method to the
 // service does not break them: an unimplemented method answers its caller
@@ -313,12 +355,18 @@ var Flaky_ServiceDesc = protobus.ServiceDesc{
 	Methods: []protobus.MethodDesc{
 		{
 			MethodName: "fail",
-			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc, interceptor protobus.UnaryServerInterceptor) (proto.Message, error) {
 				in := new(FailRequest)
 				if err := dec(in); err != nil {
 					return nil, err
 				}
-				return srv.(FlakyServer).Fail(ctx, in)
+				if interceptor == nil {
+					return srv.(FlakyServer).Fail(ctx, in)
+				}
+				info := &protobus.UnaryServerInfo{Server: srv, FullMethod: "interop.Flaky.fail"}
+				return interceptor(ctx, in, info, func(ctx context.Context, req proto.Message) (proto.Message, error) {
+					return srv.(FlakyServer).Fail(ctx, req.(*FailRequest))
+				})
 			},
 		},
 	},
@@ -332,8 +380,7 @@ func RegisterFlakyServer(bus *protobus.Bus, srv FlakyServer, opts ...protobus.Se
 }
 
 // Replicas in several languages share this service's queue and retry ladder.
-//
-//	fail always fails, after announcing the attempt as an event.
+// fail always fails, after announcing the attempt as an event.
 type FlakyClient interface {
 	// Fail calls the fail method.
 	Fail(ctx context.Context, in *FailRequest, opts ...protobus.CallOption) (*Nothing, error)
@@ -343,7 +390,7 @@ type flakyClient struct {
 	c *protobus.Client
 }
 
-// NewFlakyClient returns a client for interop.Flaky. Pass protobus.ForInstance
+// NewFlakyClient returns a client for interop.Flaky. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewFlakyClient(bus *protobus.Bus, opts ...protobus.ClientOption) FlakyClient {
 	return &flakyClient{c: protobus.NewClient(bus, Flaky_ServiceName, opts...)}
@@ -393,7 +440,7 @@ type listenerClient struct {
 	c *protobus.Client
 }
 
-// NewListenerClient returns a client for interop.Listener. Pass protobus.ForInstance
+// NewListenerClient returns a client for interop.Listener. Pass protobus.WithInstance
 // to address a named instance of the service.
 func NewListenerClient(bus *protobus.Bus, opts ...protobus.ClientOption) ListenerClient {
 	return &listenerClient{c: protobus.NewClient(bus, Listener_ServiceName, opts...)}

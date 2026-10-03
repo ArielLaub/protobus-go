@@ -140,7 +140,7 @@ func TestResolveClientTrimsInstanceNames(t *testing.T) {
 	bus, res := dynamicBus(t, b)
 	svc, err := bus.RegisterDynamic("Dyn.Player", DynamicHandlers{Unary: map[string]DynamicHandler{
 		"ping": func(context.Context, proto.Message) (proto.Message, error) { return newSum(t, res, 6), nil },
-	}}, AsInstance("p6"))
+	}}, WithInstance("p6"))
 	if err != nil {
 		t.Fatal(err)
 	}

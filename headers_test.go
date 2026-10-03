@@ -52,7 +52,7 @@ func TestStreamFinalIsTolerant(t *testing.T) {
 		in, want := c.in, c.want
 		h := amqp.Table{}
 		if in != nil {
-			h[HeaderFinal] = in
+			h[headerFinal] = in
 		}
 		if got := streamFinal(h); got != want {
 			t.Errorf("final %#v -> %v, want %v", in, got, want)
@@ -62,11 +62,11 @@ func TestStreamFinalIsTolerant(t *testing.T) {
 
 func TestStreamSeqIgnoresWhatItCannotRead(t *testing.T) {
 	for _, bad := range []any{"x", -1, 1.5} {
-		if _, ok := streamSeq(amqp.Table{HeaderSeq: bad}); ok {
+		if _, ok := streamSeq(amqp.Table{headerSeq: bad}); ok {
 			t.Errorf("seq %#v must disable checking, not fail", bad)
 		}
 	}
-	if n, ok := streamSeq(amqp.Table{HeaderSeq: "3"}); !ok || n != 3 {
+	if n, ok := streamSeq(amqp.Table{headerSeq: "3"}); !ok || n != 3 {
 		t.Error("a numeric string is accepted")
 	}
 	if _, ok := streamSeq(nil); ok {

@@ -54,7 +54,7 @@ func Play(ctx context.Context, bus *protobus.Bus, out io.Writer, seed uint64) (R
 		id := fmt.Sprintf("player%d", i+1)
 		p := NewPlayer(bus, id, s, seed+uint64(i), func(f string, a ...any) { say("  "+f, a...) })
 		// Each player is an instance of the one Combat.Player contract.
-		svc, err := combat.RegisterPlayerServer(bus, p, protobus.AsInstance(id))
+		svc, err := combat.RegisterPlayerServer(bus, p, protobus.WithInstance(id))
 		if err != nil {
 			return Result{}, err
 		}
@@ -82,7 +82,7 @@ func Play(ctx context.Context, bus *protobus.Bus, out io.Writer, seed uint64) (R
 	// Index 0 is initiated last: its first turn passes the turn on, and every
 	// other player must know the order by then.
 	for i := len(order) - 1; i >= 0; i-- {
-		c := combat.NewPlayerClient(bus, protobus.ForInstance(order[i]))
+		c := combat.NewPlayerClient(bus, protobus.WithInstance(order[i]))
 		if _, err := c.InitiateGame(ctx, &combat.InitiateGameRequest{PlayerOrder: order, MyIndex: int32(i)}); err != nil {
 			return Result{}, err
 		}
@@ -100,7 +100,7 @@ func Play(ctx context.Context, bus *protobus.Bus, out io.Writer, seed uint64) (R
 
 	say("%s\nFINAL RESULTS\n%s", rule, rule)
 	for _, id := range order {
-		st, err := combat.NewPlayerClient(bus, protobus.ForInstance(id)).GetStatus(ctx, &combat.GetStatusRequest{})
+		st, err := combat.NewPlayerClient(bus, protobus.WithInstance(id)).GetStatus(ctx, &combat.GetStatusRequest{})
 		if err != nil {
 			return Result{}, err
 		}
