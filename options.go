@@ -306,8 +306,10 @@ func WithEventConcurrency(n int) EventOption {
 	}}
 }
 
-// WithEventRetry enables retries for event handlers, with a per-listener
-// redelivery path so listeners that succeeded are not re-run. After
+// WithEventRetry enables retries for event handlers. A retried event comes
+// back only to the listener that failed it (each has its own redelivery
+// path), but there it re-runs every matching handler, including those that
+// succeeded: make handlers idempotent, keyed on EventInfo.MessageID. After
 // MaxRetries the event goes to "<queue>.DLQ", as does an event whose handler
 // returns a HandledError or that does not decode. Off by default: a failing
 // handler then drops its event, so one poisonous event cannot stall a

@@ -77,8 +77,9 @@ func WithRetry(p RetryPolicy) ServiceOption {
 
 // WithEarlyAck acknowledges each request on arrival instead of after its
 // reply: at-most-once delivery, with no retries and no dead-letter queue. A
-// failure is still reported to the caller. Under early ack the broker applies
-// no prefetch, so WithMaxConcurrent bounds concurrency in-process instead.
+// failure is still reported to the caller. A delivery is acknowledged when a
+// handler slot frees up, so WithMaxConcurrent (the prefetch) still bounds the
+// work in process: up to n handlers running and n more deliveries waiting.
 func WithEarlyAck() ServiceOption { return serviceOpt(func(o *serviceOptions) { o.earlyAck = true }) }
 
 // WithProcessingTimeout replaces Config.ProcessingTimeout for this service's
@@ -90,8 +91,9 @@ func WithProcessingTimeout(d time.Duration) ServiceOption {
 
 // WithMaxPriority declares the service queue as a RabbitMQ priority queue with
 // x-max-priority n (1..255; RecommendedMaxPriority is the sensible choice).
-// It cannot be combined with WithEarlyAck: without a prefetch the broker
-// hands the whole backlog to the consumer and leaves nothing to reorder.
+// It cannot be combined with WithEarlyAck, as in the TypeScript port: early
+// ack takes requests off the queue as soon as a slot frees, before a
+// higher-priority arrival can overtake them.
 //
 // RabbitMQ fixes a queue's arguments at declaration, so adding or changing
 // this on an existing queue fails with PRECONDITION_FAILED until an operator
@@ -219,8 +221,8 @@ func (o *serviceOptions) validate() error {
 				ErrInvalidPriority, RecommendedMaxPriority)
 		}
 		if o.earlyAck {
-			return fmt.Errorf("%w: WithMaxPriority requires late ack: under early ack the broker applies no "+
-				"prefetch and hands over the whole backlog, leaving priority nothing to reorder", ErrInvalidPriority)
+			return fmt.Errorf("%w: WithMaxPriority requires late ack: early ack takes requests off the queue "+
+				"before a higher-priority arrival can overtake them", ErrInvalidPriority)
 		}
 	}
 	return nil
