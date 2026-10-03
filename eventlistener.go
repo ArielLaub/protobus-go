@@ -221,34 +221,52 @@ func (l *EventListener) add(ctx context.Context, pattern string, s *subscription
 // not.
 func Subscribe[T proto.Message](ctx context.Context, l *EventListener, handler func(context.Context, T, EventInfo) error, opts ...SubscribeOption) error {
 	var zero T
-	name := zero.ProtoReflect().Descriptor().FullName()
+	mt := zero.ProtoReflect().Type()
+	return SubscribeType(ctx, l, mt, func(ctx context.Context, m proto.Message, info EventInfo) error {
+		return handler(ctx, m.(T), info)
+	}, opts...)
+}
+
+// SubscribeType is Subscribe for a message type known only at runtime, such as
+// a dynamicpb type from protoload. handler receives messages of type mt.
+func SubscribeType(ctx context.Context, l *EventListener, mt protoreflect.MessageType, handler func(context.Context, proto.Message, EventInfo) error, opts ...SubscribeOption) error {
+	name := mt.Descriptor().FullName()
 	o := subscribeOptions{topic: "EVENT." + string(name)}
 	for _, opt := range opts {
 		opt.applySubscribe(&o)
 	}
 	s := &subscription{typeName: name, handle: func(ctx context.Context, ev *wire.Event, info EventInfo) error {
-		msg := newMessage[T]()
-		if err := proto.Unmarshal(ev.Data, msg); err != nil {
-			return fmt.Errorf("protobus: decoding event %s: %w", ev.Type, err)
+		msg := mt.New().Interface()
+		if err := unmarshal(ev.Data, msg); err != nil {
+			return eventDecodeError(ev.Type, err)
 		}
 		return handler(ctx, msg, info)
 	}}
 	return l.add(ctx, o.topic, s, false)
 }
 
+// eventDecodeError marks an event that cannot be read. Like an undecodable
+// request it fails the same way on every redelivery, so it is not retried:
+// it goes to the dead-letter queue when the listener has one, and is dropped
+// otherwise.
+func eventDecodeError(typ string, err error) error {
+	return fmt.Errorf("%w: %w", newProtocolError("event "+typ+" did not decode"), err)
+}
+
 // SubscribeAll runs handler for every event delivered to the listener,
 // binding its queue to every topic ("#"). The event is decoded with the type
-// it names, resolved in the bus's type registry. It runs before any typed
+// it names, resolved in the bus's type registry; an event of a type the
+// registry does not know is a protocol failure. It runs before any typed
 // subscription matching the same event.
 func (l *EventListener) SubscribeAll(ctx context.Context, handler func(context.Context, proto.Message, EventInfo) error) error {
 	s := &subscription{handle: func(ctx context.Context, ev *wire.Event, info EventInfo) error {
 		mt, err := l.bus.types.FindMessageByName(protoreflect.FullName(ev.Type))
 		if err != nil {
-			return fmt.Errorf("%w %q", ErrUnknownEventType, ev.Type)
+			return eventDecodeError(ev.Type, fmt.Errorf("%w %q", ErrUnknownEventType, ev.Type))
 		}
 		msg := mt.New().Interface()
-		if err := proto.Unmarshal(ev.Data, msg); err != nil {
-			return fmt.Errorf("protobus: decoding event %s: %w", ev.Type, err)
+		if err := unmarshal(ev.Data, msg); err != nil {
+			return eventDecodeError(ev.Type, err)
 		}
 		return handler(ctx, msg, info)
 	}}
@@ -258,7 +276,7 @@ func (l *EventListener) SubscribeAll(ctx context.Context, handler func(context.C
 func (l *EventListener) handle(ctx context.Context, d *amqp.Delivery, _ *deliveryControl) handlerResult {
 	ev, err := wire.DecodeEvent(d.Body)
 	if err != nil {
-		return handlerResult{err: err}
+		return handlerResult{err: eventDecodeError("(unknown)", err), handled: true}
 	}
 	// Prefer the key the broker routed on over the body's topic: the body is
 	// publisher-controlled, and trusting it would let a publisher reach

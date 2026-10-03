@@ -79,8 +79,8 @@ func TestRemoteErrorCarriesCode(t *testing.T) {
 	if ErrorCode(err) != "NOT_FOUND" {
 		t.Fatalf("code %q", ErrorCode(err))
 	}
-	if err.Error() != "no such account" {
-		t.Fatalf("Error() = %q; a remote error reads as the message the service sent", err.Error())
+	if re := err.(*RemoteError); re.Message != "no such account" {
+		t.Fatalf("Message = %q; it holds the text the service sent", re.Message)
 	}
 	if !IsCode(fmt.Errorf("calling: %w", err), "NOT_FOUND") {
 		t.Fatal("IsCode must see through wrapping")
@@ -164,5 +164,30 @@ func TestSanitizeForCaller(t *testing.T) {
 	timeout := sanitizeForCaller(newProcessingTimeoutError("cid", 0), false)
 	if timeout.Code != CodeProcessingTimeout {
 		t.Fatalf("a processing timeout tells the caller what happened even when hidden: %+v", timeout)
+	}
+}
+
+func TestRemoteErrorStringNamesItsOrigin(t *testing.T) {
+	err := &RemoteError{Method: "Calc.Service.divide", Code: "DIVISION_BY_ZERO", Message: "cannot divide by zero"}
+	if got := err.Error(); got != "protobus: Calc.Service.divide: DIVISION_BY_ZERO: cannot divide by zero" {
+		t.Fatalf("got %q", got)
+	}
+	if got := (&RemoteError{Method: "a.B.c", Message: "boom"}).Error(); got != "protobus: a.B.c: boom" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRelayedRemoteErrors(t *testing.T) {
+	// A service returning a downstream service's business error answers its
+	// own caller with it; an infrastructure failure downstream is retried.
+	relayed := fmt.Errorf("charging: %w", &RemoteError{Method: "Pay.Svc.charge", Code: "CARD_DECLINED", Message: "declined"})
+	h, ok := asAnswerable(relayed)
+	if !ok || h.Code != "CARD_DECLINED" || h.Message != "declined" {
+		t.Fatalf("a relayed business error is answered as it is: %+v %v", h, ok)
+	}
+	for _, code := range []string{"", CodeInternal, CodeProcessingTimeout} {
+		if _, ok := asAnswerable(&RemoteError{Code: code, Message: "x"}); ok {
+			t.Errorf("a downstream %q is an infrastructure failure and is retried", code)
+		}
 	}
 }

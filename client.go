@@ -107,7 +107,7 @@ func decodeReply(reply []byte, method string, out proto.Message) error {
 	if got := resp.Result.Method; got != method {
 		return fmt.Errorf("%w: reply for %s answers %q", ErrInvalidResponse, method, got)
 	}
-	if err := proto.Unmarshal(resp.Result.Data, out); err != nil {
+	if err := unmarshal(resp.Result.Data, out); err != nil {
 		return fmt.Errorf("%w for %s: %w", ErrInvalidResponse, method, err)
 	}
 	return nil

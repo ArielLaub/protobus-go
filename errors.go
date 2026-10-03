@@ -142,12 +142,42 @@ type RemoteError struct {
 	Message string
 }
 
-func (e *RemoteError) Error() string     { return e.Message }
+// Error names the method and code, so a remote failure is recognisable in a
+// log. Message holds the service's text alone.
+func (e *RemoteError) Error() string {
+	if e.Code == "" {
+		return "protobus: " + e.Method + ": " + e.Message
+	}
+	return "protobus: " + e.Method + ": " + e.Code + ": " + e.Message
+}
+
+// ErrorCode returns the code the remote service sent.
 func (e *RemoteError) ErrorCode() string { return e.Code }
+
+// asAnswerable reports whether err is something to answer the caller with
+// rather than retry, and how: a HandledError, or a downstream service's own
+// answer relayed as it is. A relayed RemoteError keeps the downstream code
+// and message; one without a code, or reporting an internal error or a
+// timeout, is an infrastructure failure, retried like any other.
+func asAnswerable(err error) (*HandledError, bool) {
+	if h, ok := AsHandled(err); ok {
+		return h, true
+	}
+	var re *RemoteError
+	if errors.As(err, &re) {
+		switch re.Code {
+		case "", CodeInternal, CodeProcessingTimeout:
+			return nil, false
+		}
+		return &HandledError{Code: re.Code, Message: re.Message}, true
+	}
+	return nil, false
+}
 
 // PublishError reports a publish the broker did not positively confirm. Err
 // is one of ErrPublishNacked, ErrUnroutable, ErrPublishConfirmTimeout or
-// ErrChannelClosed.
+// ErrChannelClosed, or the context's error when the caller's context ended
+// while the confirm was awaited (an ambiguous outcome too).
 type PublishError struct {
 	Err        error
 	MessageID  string
@@ -336,7 +366,7 @@ type callerError struct {
 // fact. Anything else crosses only when exposure is on; otherwise it becomes a
 // generic internal error and the real one stays in the service's own log.
 func sanitizeForCaller(err error, expose bool) callerError {
-	if h, ok := AsHandled(err); ok {
+	if h, ok := asAnswerable(err); ok {
 		return callerError{Code: h.Code, Message: h.Message}
 	}
 	var pt *processingTimeoutError

@@ -11,6 +11,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/dynamicpb"
 
 	"github.com/ArielLaub/protobus-go/v2/internal/fakebroker"
 	"github.com/ArielLaub/protobus-go/v2/internal/testpb"
@@ -362,5 +363,49 @@ func TestEventListenerHandlesInParallel(t *testing.T) {
 	}
 	if peak.Load() != 4 {
 		t.Fatalf("peak concurrency %d, want 4", peak.Load())
+	}
+}
+
+func TestUndecodableEventsAreNotRetried(t *testing.T) {
+	b := fakebroker.New()
+	bus := dialTest(t, b, fastConfig())
+	l, _ := bus.NewEventListener("Bad.Events", WithEventRetry(EventRetryPolicy{MaxRetries: 3, Delay: 10 * time.Millisecond}))
+	t.Cleanup(func() { _ = l.Close() })
+	ran := newReceived[*testpb.Ping]()
+	_ = Subscribe(testCtx(t), l, ran.handler(nil))
+	_ = l.Start(testCtx(t))
+
+	garbage := wire.AppendEvent(nil, wire.Event{Type: "Test.Ping", Topic: "EVENT.Test.Ping", Data: []byte{0x0a, 0xff}})
+	_ = b.Publish("proto.bus.events", "EVENT.Test.Ping", amqp.Publishing{Body: garbage, MessageId: "bad-payload"})
+	_ = b.Publish("proto.bus.events", "EVENT.Test.Ping", amqp.Publishing{Body: []byte{0xff, 0xff}, MessageId: "bad-envelope"})
+	eventually(t, "both dead-lettered", func() bool { return b.QueueDepth("Bad.Events.DLQ") == 2 })
+	for _, op := range b.OpsOf("publish") {
+		if op.Exchange == "Bad.Events.Retry.Exchange" {
+			t.Fatal("an event that cannot be decoded must not be retried")
+		}
+	}
+	if ran.count() != 0 {
+		t.Fatal("the handler must not run")
+	}
+}
+
+func TestSubscribeTypeForDynamicMessages(t *testing.T) {
+	b := fakebroker.New()
+	bus := dialTest(t, b, fastConfig())
+	l, _ := bus.NewEventListener("")
+	t.Cleanup(func() { _ = l.Close() })
+	mt := dynamicpb.NewMessageType((&testpb.Ping{}).ProtoReflect().Descriptor())
+	got := make(chan proto.Message, 1)
+	if err := SubscribeType(testCtx(t), l, mt, func(_ context.Context, m proto.Message, _ EventInfo) error {
+		got <- m
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Start(testCtx(t))
+	_ = bus.PublishEvent(testCtx(t), &testpb.Ping{Id: "dyn"})
+	m := recvWithin(t, got, time.Second)
+	if _, ok := m.(*dynamicpb.Message); !ok {
+		t.Fatalf("got %T", m)
 	}
 }

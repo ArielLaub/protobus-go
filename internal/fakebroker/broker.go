@@ -69,6 +69,7 @@ type Broker struct {
 	dialFault     error
 	dials         int
 	confirmPolicy func(Published) ConfirmAction
+	confirmDelay  func(Published) time.Duration
 	ops           []Op
 	nameSeq       int
 }
@@ -162,6 +163,16 @@ func (b *Broker) Dials() int {
 func (b *Broker) SetConfirmPolicy(p func(Published) ConfirmAction) {
 	b.mu.Lock()
 	b.confirmPolicy = p
+	b.mu.Unlock()
+}
+
+// SetConfirmDelay delays the confirm of matching publishes, as a broker does
+// for a persistent message awaiting fsync. Routing (and any basic.return) is
+// immediate; only the ack is late, and later publishes may be confirmed
+// first. nil removes the delay.
+func (b *Broker) SetConfirmDelay(f func(Published) time.Duration) {
+	b.mu.Lock()
+	b.confirmDelay = f
 	b.mu.Unlock()
 }
 

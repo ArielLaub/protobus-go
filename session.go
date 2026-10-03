@@ -246,6 +246,12 @@ func (s *session) reconnect() chan *amqp.Error {
 			}
 			continue
 		}
+		// Closed while the restorers ran: this connection is ours to close,
+		// and nothing may be announced.
+		if s.ctx.Err() != nil {
+			_ = conn.Close()
+			return nil
+		}
 		// The socket may have died while restorers ran; then the attempt
 		// failed, however well the restorers think they did.
 		select {
@@ -295,6 +301,9 @@ func (s *session) finish(err error) {
 func (s *session) markReady() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.doneErr != nil {
+		return // finished: never ready again
+	}
 	if !s.isReady {
 		s.isReady = true
 		close(s.ready)
@@ -404,6 +413,13 @@ func (s *session) close() error {
 		_ = conn.Close()
 	}
 	s.wg.Wait()
+	// The supervisor may have installed a newer connection meanwhile.
+	s.mu.Lock()
+	conn = s.conn
+	s.mu.Unlock()
+	if conn != nil && !conn.IsClosed() {
+		_ = conn.Close()
+	}
 	return nil
 }
 

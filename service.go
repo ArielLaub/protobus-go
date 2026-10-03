@@ -474,7 +474,7 @@ func (s *Service) handle(ctx context.Context, d *amqp.Delivery, ctl *deliveryCon
 	}
 	ctx = withCallInfo(ctx, info)
 	dec := func(m proto.Message) error {
-		if err := proto.Unmarshal(env.Data, m); err != nil {
+		if err := unmarshal(env.Data, m); err != nil {
 			return &payloadError{err}
 		}
 		return nil
@@ -519,7 +519,7 @@ func (s *Service) failure(ctx context.Context, method string, err error) handler
 	case errors.Is(err, ErrUnimplemented):
 		return s.rejection(method, "invalid service method "+lastSegment(method))
 	}
-	if h, ok := AsHandled(err); ok {
+	if h, ok := asAnswerable(err); ok {
 		s.bus.log.LogAttrs(ctx, slog.LevelInfo, "handled error", attrOperation("handle"), attrService(s.name),
 			attrMethod(method), slog.String("code", h.Code))
 		return handlerResult{reply: s.encodeError(method, err)}

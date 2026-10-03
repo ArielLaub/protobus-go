@@ -223,3 +223,27 @@ func TestPubChannelConcurrentPublishes(t *testing.T) {
 		t.Fatalf("depth %d", b.QueueDepth("q"))
 	}
 }
+
+func TestPubChannelAttributesAReturnToItsDestination(t *testing.T) {
+	// Two publishes share a message id (a caller-driven republish, or a retry
+	// and a dead-letter copy of one delivery): only the one that went nowhere
+	// is unroutable, however the confirms interleave.
+	b := fakebroker.New()
+	pc, _ := newTestPubChannel(t, b, fastConfig())
+	b.SetConfirmDelay(func(p fakebroker.Published) time.Duration {
+		if p.Key == "k" {
+			return 100 * time.Millisecond // the routed publish's confirm is late (a slow fsync)
+		}
+		return 0
+	})
+	routed := make(chan error, 1)
+	go func() { routed <- pc.publish(context.Background(), "ex", "k", true, pub("same")) }()
+	eventually(t, "first publish sent", func() bool { return len(b.OpsOf("publish")) == 1 })
+	lost := pc.publish(testCtx(t), "ex", "nowhere", true, pub("same"))
+	if !errors.Is(lost, ErrUnroutable) {
+		t.Fatalf("the unroutable copy: %v", lost)
+	}
+	if err := recvWithin(t, routed, 2*time.Second); err != nil {
+		t.Fatalf("the routed copy must not be blamed for the other's return: %v", err)
+	}
+}

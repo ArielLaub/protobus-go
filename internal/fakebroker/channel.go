@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -464,7 +465,21 @@ func (ch *channel) PublishWithContext(ctx context.Context, exchangeName, key str
 		ch.emitReturn(ret)
 	}
 	if ch.confirm {
-		ch.emitConfirm(amqp.Confirmation{DeliveryTag: tag, Ack: true})
+		var delay time.Duration
+		if b.confirmDelay != nil {
+			delay = b.confirmDelay(Published{Exchange: exchangeName, Key: key, Mandatory: mandatory, Msg: msg})
+		}
+		if delay <= 0 {
+			ch.emitConfirm(amqp.Confirmation{DeliveryTag: tag, Ack: true})
+			return nil
+		}
+		time.AfterFunc(delay, func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if !ch.closed {
+				ch.emitConfirm(amqp.Confirmation{DeliveryTag: tag, Ack: true})
+			}
+		})
 	}
 	return nil
 }

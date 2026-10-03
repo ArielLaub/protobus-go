@@ -42,6 +42,8 @@ type pubChannel struct {
 
 type pendingPublish struct {
 	messageID string
+	exchange  string
+	key       string
 	mandatory bool
 	returned  bool
 	done      chan struct{}
@@ -79,7 +81,7 @@ func (p *pubChannel) loop(confirms <-chan amqp.Confirmation, returns <-chan amqp
 				returns = nil
 				continue
 			}
-			p.markReturned(r.MessageId)
+			p.markReturned(r)
 		case c, ok := <-confirms:
 			if !ok {
 				confirms = nil
@@ -91,22 +93,56 @@ func (p *pubChannel) loop(confirms <-chan amqp.Confirmation, returns <-chan amqp
 			if ok && e != nil {
 				reason = e.Error()
 			}
+			// Confirms (and returns) already received must win over the
+			// close: reporting a confirmed publish as ambiguous invites a
+			// duplicate.
+			p.drain(confirms, returns)
 			p.shutdown(reason)
 			return
 		}
 	}
 }
 
-func (p *pubChannel) markReturned(messageID string) {
+func (p *pubChannel) drain(confirms <-chan amqp.Confirmation, returns <-chan amqp.Return) {
+	for {
+		select {
+		case r, ok := <-returns:
+			if !ok {
+				returns = nil
+				continue
+			}
+			p.markReturned(r)
+		case c, ok := <-confirms:
+			if !ok {
+				confirms = nil
+				continue
+			}
+			p.resolve(c)
+		default:
+			return
+		}
+	}
+}
+
+func (p *pubChannel) markReturned(r amqp.Return) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// Only publishes still awaiting their confirm. A return that outlived its
+	// Only publishes still awaiting their confirm: a return that outlived its
 	// own publish must not be read as the verdict on a later one reusing the
-	// id, which stable message ids make routine.
-	for _, pp := range p.pending {
-		if pp.mandatory && pp.messageID == messageID {
-			pp.returned = true
+	// id, which stable message ids make routine. A return carries no delivery
+	// tag, but it does carry its destination: publishes sharing an id are told
+	// apart by where they went, and among those with the same destination
+	// (which route alike) the oldest not yet returned is the one bounced.
+	var match *pendingPublish
+	var matchTag uint64
+	for tag, pp := range p.pending {
+		if pp.mandatory && !pp.returned && pp.messageID == r.MessageId &&
+			pp.exchange == r.Exchange && pp.key == r.RoutingKey && (match == nil || tag < matchTag) {
+			match, matchTag = pp, tag
 		}
+	}
+	if match != nil {
+		match.returned = true
 	}
 }
 
@@ -173,7 +209,7 @@ func (p *pubChannel) publish(ctx context.Context, exchange, key string, mandator
 	}
 	defer func() { <-p.slots }()
 
-	pp := &pendingPublish{messageID: msg.MessageId, mandatory: mandatory, done: make(chan struct{})}
+	pp := &pendingPublish{messageID: msg.MessageId, exchange: exchange, key: key, mandatory: mandatory, done: make(chan struct{})}
 	fail := func(err error, detail string) error {
 		return &PublishError{Err: err, MessageID: msg.MessageId, Exchange: exchange, RoutingKey: key, Detail: detail}
 	}
