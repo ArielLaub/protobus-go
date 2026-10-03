@@ -70,8 +70,9 @@ type Config struct {
 	// AMBIGUOUS outcome. PUBLISH_CONFIRM_TIMEOUT_MS
 	PublishConfirmTimeout time.Duration
 	// Heartbeat is the AMQP heartbeat interval, which bounds how long a dead
-	// peer goes unnoticed. A `heartbeat` parameter in the broker URL wins;
-	// zero, from either, accepts the interval the broker proposes.
+	// peer goes unnoticed. A `heartbeat` parameter in the broker URL wins, and
+	// `heartbeat=0` there accepts the interval the broker proposes. Zero here
+	// means the AMQP client's default (10s).
 	// AMQP_HEARTBEAT_SECONDS
 	Heartbeat time.Duration
 	// ConnectionReadyTimeout bounds how long a publish parked on a

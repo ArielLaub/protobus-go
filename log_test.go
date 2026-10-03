@@ -118,3 +118,26 @@ func TestErrAttrNeverQuotesUnhandledText(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+func TestErrorAttrsCarryTheSharedNameAndCode(t *testing.T) {
+	// errorName and errorCode, as the TypeScript LogRecord has them, beside
+	// the one-line summary.
+	var buf bytes.Buffer
+	l := slog.New(slog.NewTextHandler(&buf, nil))
+	l.LogAttrs(context.Background(), slog.LevelInfo, "x", attrSafeError(&PublishError{Err: ErrPublishNacked}))
+	for _, want := range []string{"errorName=PublishNackedError", "errorCode=PUBLISH_NACKED", "error="} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("missing %q in %q", want, buf.String())
+		}
+	}
+	buf.Reset()
+	l.LogAttrs(context.Background(), slog.LevelInfo, "x", attrSafeError(NewHandledError("NO_FUNDS", "m")))
+	if !strings.Contains(buf.String(), "errorName=HandledError errorCode=NO_FUNDS") {
+		t.Errorf("%q", buf.String())
+	}
+	buf.Reset()
+	l.LogAttrs(context.Background(), slog.LevelInfo, "x", attrSafeError(errorString("plain")))
+	if strings.Contains(buf.String(), "errorCode") {
+		t.Errorf("no code, no errorCode: %q", buf.String())
+	}
+}

@@ -474,6 +474,12 @@ func TestNothingFromAPayloadReachesTheLog(t *testing.T) {
 	// A failing handler whose request carries the secret.
 	_, _ = newCalcClient(bus).Fail(testCtx(t), &testpb.FailRequest{Mode: "handled", Code: "C", Message: "fine"}, WithActor(secret))
 	_, _ = newCalcClient(bus).Echo(testCtx(t), &testpb.Order{Id: secret, Tags: []string{secret}})
+	// A handler that panics with it, and a method name that carries it past
+	// the log clip.
+	_, _ = newCalcClient(bus).Fail(testCtx(t), &testpb.FailRequest{Mode: "panic", Message: secret})
+	long := strings.Repeat("x", 300) + secret
+	cid = peer.send("REQUEST.Test.Calc."+long, amqp.Publishing{Body: peer.request("Test.Calc."+long, &testpb.AddRequest{})})
+	peer.await(cid, 1)
 	// An event nobody handles, and one whose handler fails.
 	_ = Subscribe(testCtx(t), svc.Events(), func(context.Context, *testpb.OrderCreated, EventInfo) error { return errors.New("handler failed") })
 	_ = bus.PublishEvent(testCtx(t), &testpb.OrderCreated{Id: secret})

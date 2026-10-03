@@ -24,3 +24,22 @@ services:
       timeout: 10s
       retries: 10
       start_period: 10s
+
+  # RabbitMQ 4, for the same suites: docker compose --profile rmq4 up -d --wait
+  # then point the variables at 26672 / 26673.
+  rabbitmq4:
+    profiles: ["rmq4"]
+    image: rabbitmq:4-management
+    container_name: protobus-go-rabbitmq4
+    ports:
+      - "127.0.0.1:${PROTOBUS_AMQP4_PORT:-26672}:5672"
+      - "127.0.0.1:${PROTOBUS_MGMT4_PORT:-26673}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s

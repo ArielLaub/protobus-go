@@ -4,7 +4,7 @@
 // service in all three languages sharing a queue and its retry ladder.
 //
 // It needs the broker of internal/brokertest, plus the sibling checkouts:
-// PROTOBUS_TS (default ../protobus, built with `npm run build`) and
+// PROTOBUS_TS (default ../protobus, built with `npm run build-ts`) and
 // PROTOBUS_PY (default ../protobus-py, with a venv/). A missing peer skips its
 // tests rather than failing them.
 package crosslang_test

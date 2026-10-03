@@ -2,9 +2,11 @@ package protobus
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -131,7 +133,22 @@ func attrDuration(d time.Duration) slog.Attr {
 // attrSafeError describes an error the way x-last-error does: class and code,
 // never an unhandled error's text. Use it for anything that may be forwarded
 // or retained; a service's own failure log uses attrError.
-func attrSafeError(err error) slog.Attr { return slog.String("error", safeErrorSummary(err)) }
+// Alongside it go errorName and errorCode, the TypeScript LogRecord fields,
+// as an inlined group so they stay top-level.
+func attrSafeError(err error) slog.Attr {
+	attrs := []any{slog.String("error", safeErrorSummary(err))}
+	name, code := "UnknownError", ""
+	if h, ok := AsHandled(err); ok {
+		name, code = "HandledError", h.Code
+	} else if err != nil {
+		name, code = errorName(innermostNamed(err)), ErrorCode(err)
+	}
+	attrs = append(attrs, attrErrorName(name))
+	if code != "" {
+		attrs = append(attrs, slog.String("errorCode", code))
+	}
+	return slog.Group("", attrs...)
+}
 
 // attrError is the full error, for a service's log of its own failures.
 func attrError(err error) slog.Attr { return slog.Any("error", err) }
@@ -146,4 +163,16 @@ func clip(v string) string {
 		return v
 	}
 	return v[:maxLogField] + "..."
+}
+
+// panicSummary describes a recovered panic value for the log. A runtime
+// error's text comes from the Go runtime (a nil dereference, an index out of
+// range) and is kept; any other value may carry request data, as a
+// panic(fmt.Sprintf(...)) does, so only its type is logged. The stack is
+// logged beside it.
+func panicSummary(v any) string {
+	if re, ok := v.(runtime.Error); ok {
+		return clip(re.Error())
+	}
+	return fmt.Sprintf("%T", v)
 }

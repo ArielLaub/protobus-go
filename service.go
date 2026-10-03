@@ -412,7 +412,7 @@ func (s *Service) encodeError(method string, err error) []byte {
 // redelivery, so retrying buys nothing.
 func (s *Service) rejection(label, reason string) handlerResult {
 	s.bus.log.LogAttrs(context.Background(), slog.LevelError, "rejected request", attrOperation("dispatch"),
-		attrService(s.name), attrMethod(label), slog.String("reason", reason), attrOutcome(outcomeRejected))
+		attrService(s.name), attrMethod(label), slog.String("reason", clip(reason)), attrOutcome(outcomeRejected))
 	return handlerResult{reply: s.encodeError(label, newProtocolError(reason))}
 }
 

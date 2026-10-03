@@ -475,7 +475,7 @@ func (c *consumer) run(ctx context.Context, cancel context.CancelCauseFunc, d *a
 			if v := recover(); v != nil {
 				err := fmt.Errorf("protobus: handler panicked: %v", v)
 				c.bus.log.LogAttrs(ctx, slog.LevelError, "handler panicked", attrOperation("consume"),
-					attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), slog.Any("panic", v),
+					attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), slog.String("panic", panicSummary(v)),
 					slog.String("stack", string(debug.Stack())))
 				var reply []byte
 				if c.spec.timeoutReply != nil {
