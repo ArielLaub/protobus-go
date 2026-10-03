@@ -290,7 +290,7 @@ func TestInvokeInstanceName(t *testing.T) {
 	r := newResponder(t, b, "Test.Calc.i7", "REQUEST.Test.Calc.i7.*", adder)
 	bus := dialTest(t, b, fastConfig())
 	var out testpb.AddResponse
-	if err := NewClient(bus, "Test.Calc", WithInstanceName("i7")).Invoke(testCtx(t), "add", &testpb.AddRequest{A: 1, B: 1}, &out); err != nil {
+	if err := NewClient(bus, "Test.Calc", ForInstance("i7")).Invoke(testCtx(t), "add", &testpb.AddRequest{A: 1, B: 1}, &out); err != nil {
 		t.Fatal(err)
 	}
 	d := r.deliveries()[0]

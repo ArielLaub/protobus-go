@@ -34,11 +34,11 @@ type Client struct {
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
-// WithInstanceName addresses one named instance of a service, as served with
+// ForInstance addresses one named instance of a service, as served with
 // the service option of the same name: the request routes to
 // REQUEST.<service>.<instance>.<method> while the envelope still names the
 // contract method, which is what the instance validates against.
-func WithInstanceName(instance string) ClientOption {
+func ForInstance(instance string) ClientOption {
 	return func(c *Client) {
 		if instance != "" {
 			c.runtime = c.contract + "." + instance
