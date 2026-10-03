@@ -125,6 +125,7 @@ func (x *AddResponse) GetSum() int32 {
 type CountRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	N             int32                  `protobuf:"varint,1,opt,name=n,proto3" json:"n,omitempty"`
+	DelayMs       int32                  `protobuf:"varint,2,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -166,6 +167,186 @@ func (x *CountRequest) GetN() int32 {
 	return 0
 }
 
+func (x *CountRequest) GetDelayMs() int32 {
+	if x != nil {
+		return x.DelayMs
+	}
+	return 0
+}
+
+type FailRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// "handled", "unhandled" or "transient" (fails until succeed_after attempts)
+	Mode          string `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	Code          string `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	SucceedAfter  int32  `protobuf:"varint,4,opt,name=succeed_after,json=succeedAfter,proto3" json:"succeed_after,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FailRequest) Reset() {
+	*x = FailRequest{}
+	mi := &file_gentest_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FailRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FailRequest) ProtoMessage() {}
+
+func (x *FailRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gentest_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FailRequest.ProtoReflect.Descriptor instead.
+func (*FailRequest) Descriptor() ([]byte, []int) {
+	return file_gentest_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *FailRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *FailRequest) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *FailRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *FailRequest) GetSucceedAfter() int32 {
+	if x != nil {
+		return x.SucceedAfter
+	}
+	return 0
+}
+
+type SlowRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ms            int32                  `protobuf:"varint,1,opt,name=ms,proto3" json:"ms,omitempty"`
+	Tag           string                 `protobuf:"bytes,2,opt,name=tag,proto3" json:"tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SlowRequest) Reset() {
+	*x = SlowRequest{}
+	mi := &file_gentest_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SlowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SlowRequest) ProtoMessage() {}
+
+func (x *SlowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gentest_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SlowRequest.ProtoReflect.Descriptor instead.
+func (*SlowRequest) Descriptor() ([]byte, []int) {
+	return file_gentest_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SlowRequest) GetMs() int32 {
+	if x != nil {
+		return x.Ms
+	}
+	return 0
+}
+
+func (x *SlowRequest) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+type Ping struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	N             *pbtypes.Bigint        `protobuf:"bytes,2,opt,name=n,proto3" json:"n,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Ping) Reset() {
+	*x = Ping{}
+	mi := &file_gentest_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Ping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Ping) ProtoMessage() {}
+
+func (x *Ping) ProtoReflect() protoreflect.Message {
+	mi := &file_gentest_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Ping.ProtoReflect.Descriptor instead.
+func (*Ping) Descriptor() ([]byte, []int) {
+	return file_gentest_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Ping) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Ping) GetN() *pbtypes.Bigint {
+	if x != nil {
+		return x.N
+	}
+	return nil
+}
+
 type CountChunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	I             int32                  `protobuf:"varint,1,opt,name=i,proto3" json:"i,omitempty"`
@@ -175,7 +356,7 @@ type CountChunk struct {
 
 func (x *CountChunk) Reset() {
 	*x = CountChunk{}
-	mi := &file_gentest_proto_msgTypes[3]
+	mi := &file_gentest_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -187,7 +368,7 @@ func (x *CountChunk) String() string {
 func (*CountChunk) ProtoMessage() {}
 
 func (x *CountChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_gentest_proto_msgTypes[3]
+	mi := &file_gentest_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -200,7 +381,7 @@ func (x *CountChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountChunk.ProtoReflect.Descriptor instead.
 func (*CountChunk) Descriptor() ([]byte, []int) {
-	return file_gentest_proto_rawDescGZIP(), []int{3}
+	return file_gentest_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CountChunk) GetI() int32 {
@@ -220,17 +401,31 @@ const file_gentest_proto_rawDesc = "" +
 	"\x01a\x18\x01 \x01(\x05R\x01a\x12\f\n" +
 	"\x01b\x18\x02 \x01(\x05R\x01b\"\x1f\n" +
 	"\vAddResponse\x12\x10\n" +
-	"\x03sum\x18\x01 \x01(\x05R\x03sum\"\x1c\n" +
+	"\x03sum\x18\x01 \x01(\x05R\x03sum\"7\n" +
 	"\fCountRequest\x12\f\n" +
-	"\x01n\x18\x01 \x01(\x05R\x01n\"\x1a\n" +
+	"\x01n\x18\x01 \x01(\x05R\x01n\x12\x19\n" +
+	"\bdelay_ms\x18\x02 \x01(\x05R\adelayMs\"t\n" +
+	"\vFailRequest\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12#\n" +
+	"\rsucceed_after\x18\x04 \x01(\x05R\fsucceedAfter\"/\n" +
+	"\vSlowRequest\x12\x0e\n" +
+	"\x02ms\x18\x01 \x01(\x05R\x02ms\x12\x10\n" +
+	"\x03tag\x18\x02 \x01(\tR\x03tag\"-\n" +
+	"\x04Ping\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
+	"\x01n\x18\x02 \x01(\v2\a.bigintR\x01n\"\x1a\n" +
 	"\n" +
 	"CountChunk\x12\f\n" +
-	"\x01i\x18\x01 \x01(\x05R\x01i2\xc7\x01\n" +
+	"\x01i\x18\x01 \x01(\x05R\x01i2\xaf\x02\n" +
 	"\x04Calc\x120\n" +
 	"\x03add\x12\x13.GenTest.AddRequest\x1a\x14.GenTest.AddResponse\x125\n" +
 	"\x05count\x12\x15.GenTest.CountRequest\x1a\x13.GenTest.CountChunk0\x01\x12\x1a\n" +
 	"\x06double\x12\a.bigint\x1a\a.bigint\x12:\n" +
-	"\runimplemented\x12\x13.GenTest.AddRequest\x1a\x14.GenTest.AddResponse2C\n" +
+	"\runimplemented\x12\x13.GenTest.AddRequest\x1a\x14.GenTest.AddResponse\x122\n" +
+	"\x04fail\x12\x14.GenTest.FailRequest\x1a\x14.GenTest.AddResponse\x122\n" +
+	"\x04slow\x12\x14.GenTest.SlowRequest\x1a\x14.GenTest.AddResponse2C\n" +
 	"\x06Ticker\x124\n" +
 	"\x04tick\x12\x15.GenTest.CountRequest\x1a\x13.GenTest.CountChunk0\x01\x1a\x03\x88\x02\x01B6Z4github.com/ArielLaub/protobus-go/v2/internal/gentestb\x06proto3"
 
@@ -246,30 +441,38 @@ func file_gentest_proto_rawDescGZIP() []byte {
 	return file_gentest_proto_rawDescData
 }
 
-var file_gentest_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_gentest_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_gentest_proto_goTypes = []any{
 	(*AddRequest)(nil),     // 0: GenTest.AddRequest
 	(*AddResponse)(nil),    // 1: GenTest.AddResponse
 	(*CountRequest)(nil),   // 2: GenTest.CountRequest
-	(*CountChunk)(nil),     // 3: GenTest.CountChunk
-	(*pbtypes.Bigint)(nil), // 4: bigint
+	(*FailRequest)(nil),    // 3: GenTest.FailRequest
+	(*SlowRequest)(nil),    // 4: GenTest.SlowRequest
+	(*Ping)(nil),           // 5: GenTest.Ping
+	(*CountChunk)(nil),     // 6: GenTest.CountChunk
+	(*pbtypes.Bigint)(nil), // 7: bigint
 }
 var file_gentest_proto_depIdxs = []int32{
-	0, // 0: GenTest.Calc.add:input_type -> GenTest.AddRequest
-	2, // 1: GenTest.Calc.count:input_type -> GenTest.CountRequest
-	4, // 2: GenTest.Calc.double:input_type -> bigint
-	0, // 3: GenTest.Calc.unimplemented:input_type -> GenTest.AddRequest
-	2, // 4: GenTest.Ticker.tick:input_type -> GenTest.CountRequest
-	1, // 5: GenTest.Calc.add:output_type -> GenTest.AddResponse
-	3, // 6: GenTest.Calc.count:output_type -> GenTest.CountChunk
-	4, // 7: GenTest.Calc.double:output_type -> bigint
-	1, // 8: GenTest.Calc.unimplemented:output_type -> GenTest.AddResponse
-	3, // 9: GenTest.Ticker.tick:output_type -> GenTest.CountChunk
-	5, // [5:10] is the sub-list for method output_type
-	0, // [0:5] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	7, // 0: GenTest.Ping.n:type_name -> bigint
+	0, // 1: GenTest.Calc.add:input_type -> GenTest.AddRequest
+	2, // 2: GenTest.Calc.count:input_type -> GenTest.CountRequest
+	7, // 3: GenTest.Calc.double:input_type -> bigint
+	0, // 4: GenTest.Calc.unimplemented:input_type -> GenTest.AddRequest
+	3, // 5: GenTest.Calc.fail:input_type -> GenTest.FailRequest
+	4, // 6: GenTest.Calc.slow:input_type -> GenTest.SlowRequest
+	2, // 7: GenTest.Ticker.tick:input_type -> GenTest.CountRequest
+	1, // 8: GenTest.Calc.add:output_type -> GenTest.AddResponse
+	6, // 9: GenTest.Calc.count:output_type -> GenTest.CountChunk
+	7, // 10: GenTest.Calc.double:output_type -> bigint
+	1, // 11: GenTest.Calc.unimplemented:output_type -> GenTest.AddResponse
+	1, // 12: GenTest.Calc.fail:output_type -> GenTest.AddResponse
+	1, // 13: GenTest.Calc.slow:output_type -> GenTest.AddResponse
+	6, // 14: GenTest.Ticker.tick:output_type -> GenTest.CountChunk
+	8, // [8:15] is the sub-list for method output_type
+	1, // [1:8] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_gentest_proto_init() }
@@ -283,7 +486,7 @@ func file_gentest_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gentest_proto_rawDesc), len(file_gentest_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

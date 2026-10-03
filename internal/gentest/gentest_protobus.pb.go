@@ -38,6 +38,10 @@ type CalcServer interface {
 	Double(context.Context, *pbtypes.Bigint) (*pbtypes.Bigint, error)
 	// Unimplemented serves the unimplemented method.
 	Unimplemented(context.Context, *AddRequest) (*AddResponse, error)
+	// Fail serves the fail method.
+	Fail(context.Context, *FailRequest) (*AddResponse, error)
+	// Slow serves the slow method.
+	Slow(context.Context, *SlowRequest) (*AddResponse, error)
 }
 
 // UnimplementedCalcServer answers every method with protobus.ErrUnimplemented.
@@ -56,6 +60,14 @@ func (UnimplementedCalcServer) Double(context.Context, *pbtypes.Bigint) (*pbtype
 }
 
 func (UnimplementedCalcServer) Unimplemented(context.Context, *AddRequest) (*AddResponse, error) {
+	return nil, protobus.ErrUnimplemented
+}
+
+func (UnimplementedCalcServer) Fail(context.Context, *FailRequest) (*AddResponse, error) {
+	return nil, protobus.ErrUnimplemented
+}
+
+func (UnimplementedCalcServer) Slow(context.Context, *SlowRequest) (*AddResponse, error) {
 	return nil, protobus.ErrUnimplemented
 }
 
@@ -94,6 +106,26 @@ var Calc_ServiceDesc = protobus.ServiceDesc{
 				return srv.(CalcServer).Unimplemented(ctx, in)
 			},
 		},
+		{
+			MethodName: "fail",
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+				in := new(FailRequest)
+				if err := dec(in); err != nil {
+					return nil, err
+				}
+				return srv.(CalcServer).Fail(ctx, in)
+			},
+		},
+		{
+			MethodName: "slow",
+			Handler: func(srv any, ctx context.Context, dec protobus.DecodeFunc) (proto.Message, error) {
+				in := new(SlowRequest)
+				if err := dec(in); err != nil {
+					return nil, err
+				}
+				return srv.(CalcServer).Slow(ctx, in)
+			},
+		},
 	},
 	Streams: []protobus.StreamDesc{
 		{
@@ -125,6 +157,10 @@ type CalcClient interface {
 	Double(ctx context.Context, in *pbtypes.Bigint, opts ...protobus.CallOption) (*pbtypes.Bigint, error)
 	// Unimplemented calls the unimplemented method.
 	Unimplemented(ctx context.Context, in *AddRequest, opts ...protobus.CallOption) (*AddResponse, error)
+	// Fail calls the fail method.
+	Fail(ctx context.Context, in *FailRequest, opts ...protobus.CallOption) (*AddResponse, error)
+	// Slow calls the slow method.
+	Slow(ctx context.Context, in *SlowRequest, opts ...protobus.CallOption) (*AddResponse, error)
 }
 
 type calcClient struct {
@@ -160,6 +196,22 @@ func (c *calcClient) Double(ctx context.Context, in *pbtypes.Bigint, opts ...pro
 func (c *calcClient) Unimplemented(ctx context.Context, in *AddRequest, opts ...protobus.CallOption) (*AddResponse, error) {
 	out := new(AddResponse)
 	if err := c.c.Invoke(ctx, "unimplemented", in, out, opts...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *calcClient) Fail(ctx context.Context, in *FailRequest, opts ...protobus.CallOption) (*AddResponse, error) {
+	out := new(AddResponse)
+	if err := c.c.Invoke(ctx, "fail", in, out, opts...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *calcClient) Slow(ctx context.Context, in *SlowRequest, opts ...protobus.CallOption) (*AddResponse, error) {
+	out := new(AddResponse)
+	if err := c.c.Invoke(ctx, "slow", in, out, opts...); err != nil {
 		return nil, err
 	}
 	return out, nil

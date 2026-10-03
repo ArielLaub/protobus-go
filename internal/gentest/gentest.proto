@@ -17,6 +17,8 @@ service Calc {
   // Takes and returns a type from another Go package.
   rpc double(bigint) returns (bigint);
   rpc unimplemented(AddRequest) returns (AddResponse);
+  rpc fail(FailRequest) returns (AddResponse);
+  rpc slow(SlowRequest) returns (AddResponse);
 }
 
 // Streams only, to exercise the import set of a streaming-only service.
@@ -36,6 +38,25 @@ message AddResponse {
 
 message CountRequest {
   int32 n = 1;
+  int32 delay_ms = 2;
+}
+
+message FailRequest {
+  // "handled", "unhandled" or "transient" (fails until succeed_after attempts)
+  string mode = 1;
+  string code = 2;
+  string message = 3;
+  int32 succeed_after = 4;
+}
+
+message SlowRequest {
+  int32 ms = 1;
+  string tag = 2;
+}
+
+message Ping {
+  string id = 1;
+  bigint n = 2;
 }
 
 message CountChunk {
