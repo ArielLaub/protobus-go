@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,12 +38,17 @@ type Broker struct {
 	mgmt *url.URL
 }
 
-// Require returns the test broker or skips the test.
+// Require returns the test broker. It skips the test when no broker is
+// configured, and fails it when one is configured but unusable: a
+// misconfigured suite must not pass by skipping everything.
 func Require(t testing.TB) *Broker {
 	t.Helper()
+	if os.Getenv("PROTOBUS_TEST_AMQP_URL") == "" || os.Getenv("PROTOBUS_TEST_MGMT_URL") == "" {
+		t.Skip("PROTOBUS_TEST_AMQP_URL and PROTOBUS_TEST_MGMT_URL are not both set; skipping broker tests")
+	}
 	b, err := FromEnv()
 	if err != nil {
-		t.Skip(err)
+		t.Fatal(err)
 	}
 	return b
 }
@@ -61,6 +67,7 @@ func FromEnv() (*Broker, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.Path = strings.TrimRight(m.Path, "/")
 	b := &Broker{amqp: a, mgmt: m}
 	if _, err := b.api(http.MethodGet, "/api/overview", nil); err != nil {
 		return nil, fmt.Errorf("management API unreachable: %w", err)

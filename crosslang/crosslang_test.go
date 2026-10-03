@@ -88,12 +88,22 @@ func peerEnv(c *exec.Cmd, amqpURL, target string) {
 		"PEER_TARGET="+target)
 }
 
+// peerUnavailable skips a test whose peer is missing, unless the peer was
+// configured explicitly (as CI does): then its absence is a failure.
+func peerUnavailable(t *testing.T, lang string, err error) {
+	t.Helper()
+	if os.Getenv(map[string]string{"ts": "PROTOBUS_TS", "py": "PROTOBUS_PY"}[lang]) != "" {
+		t.Fatal(err)
+	}
+	t.Skip(err)
+}
+
 // startServer runs a peer's server until the test ends.
 func startServer(t *testing.T, p peer, amqpURL string) {
 	t.Helper()
 	c, err := p.cmd("server")
 	if err != nil {
-		t.Skip(err)
+		peerUnavailable(t, p.lang, err)
 	}
 	peerEnv(c, amqpURL, p.lang)
 	var stderr syncBuffer
@@ -388,7 +398,7 @@ func TestPeerClientsAgainstGoServer(t *testing.T) {
 		t.Run(client.lang+" client", func(t *testing.T) {
 			c, err := client.cmd("client")
 			if err != nil {
-				t.Skip(err)
+				peerUnavailable(t, client.lang, err)
 			}
 			vh := broker.NewVHost(t)
 			serveGo(t, dial(t, vh.URL()))
