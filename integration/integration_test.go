@@ -157,6 +157,9 @@ func TestRoundTripAndTopology(t *testing.T) {
 	}
 
 	q, ok := vh.Queue("GenTest.Calc")
+	// RabbitMQ 4 reports the default queue type as an argument; protobus
+	// itself declares none.
+	delete(q.Arguments, "x-queue-type")
 	if !ok || !q.Durable || q.Exclusive || q.AutoDelete || len(q.Arguments) != 0 {
 		t.Fatalf("service queue %+v", q)
 	}
