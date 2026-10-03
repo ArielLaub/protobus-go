@@ -603,15 +603,12 @@ func (c *consumer) requeueLater(d *amqp.Delivery, cause error) {
 	}
 	c.bus.log.LogAttrs(context.Background(), slog.LevelError, "failed to settle message; requeueing it",
 		attrOperation("settle"), attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), attrSafeError(cause))
-	sleepCtx(c.bus.sess.ctx, requeueDelay)
+	sleepCtx(c.bus.sess.ctx, c.bus.requeueDelay)
 	if err := d.Nack(false, true); err != nil {
 		c.bus.log.LogAttrs(context.Background(), slog.LevelWarn, "requeue failed; the broker redelivers on channel close",
 			attrOperation("settle"), attrCorrelationID(d.CorrelationId), attrSafeError(err))
 	}
 }
-
-// requeueDelay paces requeues of messages whose settlement failed.
-var requeueDelay = time.Second
 
 func (c *consumer) publishReply(pub *pubChannel, d *amqp.Delivery, body []byte, headers amqp.Table) error {
 	return pub.publish(context.Background(), c.bus.cfg.CallbacksExchange, d.ReplyTo, false, amqp.Publishing{

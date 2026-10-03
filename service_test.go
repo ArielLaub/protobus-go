@@ -382,12 +382,8 @@ func TestServiceRepliesBeforeAcknowledging(t *testing.T) {
 }
 
 func TestServiceRequeuesWhenTheReplyCannotBePublished(t *testing.T) {
-	old := requeueDelay
-	requeueDelay = 10 * time.Millisecond
-	t.Cleanup(func() { requeueDelay = old })
-
 	b := fakebroker.New()
-	bus := dialTest(t, b, fastConfig())
+	bus := dialTest(t, b, fastConfig(), withRequeueDelay(10*time.Millisecond))
 	startCalc(t, bus, newCalcImpl())
 	var mu sync.Mutex
 	refused := 0

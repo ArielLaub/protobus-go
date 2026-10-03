@@ -31,6 +31,8 @@ type Bus struct {
 	cancels    *cancelRegistry
 	cancelSub  *cancelListener
 
+	requeueDelay time.Duration // paces requeues of messages whose settlement failed
+
 	deliveries inflight // deliveries received and not yet settled
 	handlers   inflight // handler goroutines still running
 
@@ -72,6 +74,11 @@ func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
 		files:   o.files,
 		types:   o.types,
 		cancels: newCancelRegistry(),
+
+		requeueDelay: time.Second,
+	}
+	if o.requeue > 0 {
+		b.requeueDelay = o.requeue
 	}
 	if b.files == nil {
 		b.files = protoregistry.GlobalFiles
