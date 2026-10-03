@@ -10,12 +10,12 @@ import (
 
 func TestRedactURL(t *testing.T) {
 	cases := map[string]string{
-		"amqp://user:s3cret@broker:5672/vhost":   "amqp://user:***@broker:5672/vhost",
-		"amqps://user:s3cret@broker/%2f?x=1":     "amqps://user:***@broker/%2f?x=1",
-		"amqp://guest@localhost":                 "amqp://guest@localhost",
-		"amqp://localhost:5672/":                 "amqp://localhost:5672/",
+		"amqp://user:s3cret@broker:5672/vhost":  "amqp://user:***@broker:5672/vhost",
+		"amqps://user:s3cret@broker/%2f?x=1":    "amqps://user:***@broker/%2f?x=1",
+		"amqp://guest@localhost":                "amqp://guest@localhost",
+		"amqp://localhost:5672/":                "amqp://localhost:5672/",
 		"not a url with password p@ss:word\x7f": "<redacted>",
-		"":                                       "",
+		"":                                      "",
 	}
 	for in, want := range cases {
 		got := RedactURL(in)

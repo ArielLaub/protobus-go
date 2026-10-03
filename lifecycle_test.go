@@ -124,7 +124,9 @@ func TestShutdownGivesUpAtTheDeadline(t *testing.T) {
 	bus := dialTest(t, b, cfg)
 	impl := newCalcImpl()
 	startCalc(t, bus, impl)
-	go func() { _, _ = newCalcClient(bus).Slow(context.Background(), &testpb.SlowRequest{Ms: 400, IgnoreCancel: true}) }()
+	go func() {
+		_, _ = newCalcClient(bus).Slow(context.Background(), &testpb.SlowRequest{Ms: 400, IgnoreCancel: true})
+	}()
 	eventually(t, "in flight", func() bool { return bus.InFlight() == 1 })
 	err := bus.Shutdown(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {
