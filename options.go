@@ -102,31 +102,31 @@ type option struct {
 }
 
 type (
-	dialOption struct{ o option }
-	callOption struct{ o option }
-	streamOption struct{ o option }
-	serviceOption struct{ o option }
+	dialOption       struct{ o option }
+	callOption       struct{ o option }
+	streamOption     struct{ o option }
+	serviceOption    struct{ o option }
 	callStreamOption struct{ o option }
-	instanceOption struct{ o option }
-	messageIDOption struct{ o option }
-	topicOption struct{ o option }
-	eventOption struct{ o option }
+	instanceOption   struct{ o option }
+	messageIDOption  struct{ o option }
+	topicOption      struct{ o option }
+	eventOption      struct{ o option }
 )
 
-func (x dialOption) applyDial(o *dialOptions)                { x.o.dial(o) }
-func (x callOption) applyCall(o *callOptions)                { x.o.call(o) }
-func (x streamOption) applyStream(o *streamOptions)          { x.o.stream(o) }
-func (x serviceOption) applyService(o *serviceOptions)       { x.o.service(o) }
-func (x callStreamOption) applyCall(o *callOptions)          { x.o.call(o) }
-func (x callStreamOption) applyStream(o *streamOptions)      { x.o.stream(o) }
-func (x instanceOption) applyService(o *serviceOptions)      { x.o.service(o) }
-func (x instanceOption) applyClient(o *clientOptions)        { x.o.client(o) }
-func (x messageIDOption) applyCall(o *callOptions)           { x.o.call(o) }
-func (x messageIDOption) applyPublish(o *publishOptions)     { x.o.publish(o) }
-func (x topicOption) applyPublish(o *publishOptions)         { x.o.publish(o) }
-func (x topicOption) applySubscribe(o *subscribeOptions)     { x.o.subscribe(o) }
-func (x eventOption) applyService(o *serviceOptions)         { x.o.service(o) }
-func (x eventOption) applyListener(o *listenerOptions)       { x.o.listener(o) }
+func (x dialOption) applyDial(o *dialOptions)            { x.o.dial(o) }
+func (x callOption) applyCall(o *callOptions)            { x.o.call(o) }
+func (x streamOption) applyStream(o *streamOptions)      { x.o.stream(o) }
+func (x serviceOption) applyService(o *serviceOptions)   { x.o.service(o) }
+func (x callStreamOption) applyCall(o *callOptions)      { x.o.call(o) }
+func (x callStreamOption) applyStream(o *streamOptions)  { x.o.stream(o) }
+func (x instanceOption) applyService(o *serviceOptions)  { x.o.service(o) }
+func (x instanceOption) applyClient(o *clientOptions)    { x.o.client(o) }
+func (x messageIDOption) applyCall(o *callOptions)       { x.o.call(o) }
+func (x messageIDOption) applyPublish(o *publishOptions) { x.o.publish(o) }
+func (x topicOption) applyPublish(o *publishOptions)     { x.o.publish(o) }
+func (x topicOption) applySubscribe(o *subscribeOptions) { x.o.subscribe(o) }
+func (x eventOption) applyService(o *serviceOptions)     { x.o.service(o) }
+func (x eventOption) applyListener(o *listenerOptions)   { x.o.listener(o) }
 
 // CallStreamOption configures both unary and streaming calls.
 type CallStreamOption interface {

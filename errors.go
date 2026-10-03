@@ -70,13 +70,26 @@ var (
 	ErrUnimplemented = errors.New("protobus: method not implemented")
 )
 
-var sentinelCodes = map[error]string{
-	ErrRPCTimeout:            CodeRPCTimeout,
-	ErrNotReady:              CodeNotReady,
-	ErrPublishNacked:         CodePublishNacked,
-	ErrUnroutable:            CodeUnroutable,
-	ErrPublishConfirmTimeout: CodePublishConfirmTimeout,
-	ErrChannelClosed:         CodeChannelClosed,
+// sentinelCode returns the code of a protobus sentinel. A switch, not a map:
+// indexing a map with an arbitrary error panics when its dynamic type is not
+// comparable (a struct holding a slice, say), and errors from user code
+// arrive here.
+func sentinelCode(e error) (string, bool) {
+	switch e {
+	case ErrRPCTimeout:
+		return CodeRPCTimeout, true
+	case ErrNotReady:
+		return CodeNotReady, true
+	case ErrPublishNacked:
+		return CodePublishNacked, true
+	case ErrUnroutable:
+		return CodeUnroutable, true
+	case ErrPublishConfirmTimeout:
+		return CodePublishConfirmTimeout, true
+	case ErrChannelClosed:
+		return CodeChannelClosed, true
+	}
+	return "", false
 }
 
 // HandledError is an error a service raises deliberately to tell its caller
@@ -165,7 +178,10 @@ func (e *PublishError) Ambiguous() bool {
 		errors.Is(e.Err, context.Canceled) || errors.Is(e.Err, context.DeadlineExceeded)
 }
 
-func (e *PublishError) ErrorCode() string { return sentinelCodes[e.Err] }
+func (e *PublishError) ErrorCode() string {
+	code, _ := sentinelCode(e.Err)
+	return code
+}
 
 func (e *PublishError) errorName() string {
 	switch e.Err {
@@ -201,7 +217,7 @@ func ErrorCode(err error) string {
 				return code
 			}
 		}
-		if code, ok := sentinelCodes[e]; ok {
+		if code, ok := sentinelCode(e); ok {
 			return code
 		}
 		switch u := e.(type) {

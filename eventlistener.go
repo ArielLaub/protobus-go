@@ -51,12 +51,13 @@ type EventListener struct {
 	queue    string // "" for a private, exclusive, auto-delete queue
 	consumer *consumer
 
-	mu       sync.Mutex
-	router   *topic.Trie[*subscription]
-	all      []*subscription
-	patterns []string
-	started  bool
-	lazy     bool // start on first subscription
+	mu         sync.Mutex
+	router     *topic.Trie[*subscription]
+	all        []*subscription
+	patterns   []string
+	started    bool
+	lazy       bool // start on first subscription
+	standalone bool // made by NewEventListener, not owned by a Service
 }
 
 type subscription struct {
@@ -84,7 +85,9 @@ func (b *Bus) NewEventListener(queue string, opts ...ListenerOption) (*EventList
 	if queue == "" && o.retry.MaxRetries > 0 {
 		return nil, errors.New("protobus: event retries need a named queue: a private queue disappears with its connection")
 	}
-	return b.newEventListener(queue, o.concurrency, o.retry), nil
+	l := b.newEventListener(queue, o.concurrency, o.retry)
+	l.standalone = true
+	return l, nil
 }
 
 func (b *Bus) newEventListener(queue string, concurrency int, retry EventRetryPolicy) *EventListener {
@@ -143,7 +146,8 @@ func (l *EventListener) Queue() string {
 	return l.queue
 }
 
-// Start declares the queue and its bindings and begins consuming.
+// Start declares the queue and its bindings and begins consuming. It is
+// idempotent, and a start that failed can be retried.
 func (l *EventListener) Start(ctx context.Context) error {
 	l.mu.Lock()
 	if l.started {
@@ -153,16 +157,32 @@ func (l *EventListener) Start(ctx context.Context) error {
 	l.started = true
 	l.mu.Unlock()
 	if err := l.consumer.start(ctx); err != nil {
+		l.mu.Lock()
+		l.started = false
+		l.mu.Unlock()
 		return fmt.Errorf("protobus: starting event listener %s: %w", l.queue, err)
+	}
+	if l.standalone {
+		l.bus.mu.Lock()
+		l.bus.listeners = append(l.bus.listeners, l)
+		l.bus.mu.Unlock()
 	}
 	return nil
 }
 
-// StopConsuming stops taking new events; see Service.StopConsuming.
-func (l *EventListener) StopConsuming() { l.consumer.stopConsuming() }
+// StopConsuming stops taking new events, leaving the channel open so events
+// in hand can settle; see Service.StopConsuming. Bus.Shutdown calls it.
+func (l *EventListener) StopConsuming(context.Context) error {
+	l.consumer.stopConsuming()
+	return nil
+}
 
-// Close stops the listener and closes its channel.
-func (l *EventListener) Close() { l.consumer.close() }
+// Close stops the listener and closes its channel. Handlers still running
+// are cancelled; their events are redelivered. It is idempotent.
+func (l *EventListener) Close() error {
+	l.consumer.close()
+	return nil
+}
 
 func (l *EventListener) add(ctx context.Context, pattern string, s *subscription, all bool) error {
 	l.mu.Lock()

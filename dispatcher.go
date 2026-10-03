@@ -30,19 +30,38 @@ type dispatcher struct {
 	pub        *pubChannel
 	consumeCh  transport.Channel
 	replyQueue string
-	calls      map[string]*pendingCall
-	streams    map[string]*clientStream
-	loopDone   chan struct{}
-	closed     bool
+	// replyGen identifies the installed reply consumer. Recovery of a dead
+	// consumer is keyed on it, so a recovery can tell its own earlier cleanup
+	// from a rebuild someone else completed.
+	replyGen uint64
+	calls    map[string]*pendingCall
+	streams  map[string]*clientStream
+	loopDone chan struct{}
+	closed   bool
 
 	// bufferedBytes is the total held across every stream, bounded by
 	// Config.StreamMaxTotalBufferedBytes.
 	bufferedBytes atomic.Int64
 }
 
-type pendingCall struct {
-	reply chan []byte // buffered 1
-	lost  chan error  // buffered 1
+type callResult struct {
+	body []byte
+	err  error
+}
+
+// pendingCall awaits one reply. Every attempt to publish a call gets a fresh
+// one, so a signal meant for an earlier attempt can never answer a later one.
+type pendingCall struct{ done chan callResult }
+
+func newPendingCall() *pendingCall { return &pendingCall{done: make(chan callResult, 1)} }
+
+// resolve delivers the call's outcome. It never blocks: the first outcome
+// wins, and the supervisor and the reply reader must never wait on a caller.
+func (c *pendingCall) resolve(r callResult) {
+	select {
+	case c.done <- r:
+	default:
+	}
 }
 
 func newDispatcher(b *Bus) *dispatcher {
@@ -69,45 +88,66 @@ func declareCoreExchanges(ch transport.Channel, cfg Config) error {
 }
 
 func (d *dispatcher) restoreTopology(ctx context.Context, conn transport.Conn) error {
+	d.mu.Lock()
+	closed := d.closed
+	d.mu.Unlock()
+	if closed {
+		return nil
+	}
 	cfg := d.bus.cfg
 	ch, err := conn.Channel()
 	if err != nil {
 		return err
 	}
+	fail := func(err error) error { _ = ch.Close(); return err }
 	if err := declareCoreExchanges(ch, cfg); err != nil {
-		return err
+		return fail(err)
 	}
 	q, err := ch.QueueDeclare("", false, true, true, false, nil)
 	if err != nil {
-		return fmt.Errorf("declaring reply queue: %w", err)
+		return fail(fmt.Errorf("declaring reply queue: %w", err))
 	}
 	if err := ch.QueueBind(q.Name, q.Name, cfg.CallbacksExchange, false, nil); err != nil {
-		return fmt.Errorf("binding reply queue: %w", err)
-	}
-	// Replies are consumed with auto-ack: they are addressed to this process
-	// alone, and a reply lost with the process has no one left to read it.
-	deliveries, err := ch.ConsumeWithContext(context.WithoutCancel(ctx), q.Name, "", true, true, false, false, nil)
-	if err != nil {
-		return fmt.Errorf("consuming replies: %w", err)
+		return fail(fmt.Errorf("binding reply queue: %w", err))
 	}
 	pubRaw, err := conn.Channel()
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	pub, err := newPubChannel(pubRaw, cfg)
 	if err != nil {
-		return err
+		_ = pubRaw.Close()
+		return fail(err)
+	}
+	// Consumed last, once nothing else can fail, so a failed restore never
+	// leaves an orphan consumer filling an unread buffer. Replies are
+	// consumed with auto-ack: they are addressed to this process alone, and a
+	// reply lost with the process has no one left to read it.
+	deliveries, err := ch.ConsumeWithContext(context.WithoutCancel(ctx), q.Name, "", true, true, false, false, nil)
+	if err != nil {
+		pub.close()
+		return fail(fmt.Errorf("consuming replies: %w", err))
 	}
 	done := make(chan struct{})
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		pub.close()
+		_ = ch.Close()
+		for range deliveries {
+		}
+		return nil
+	}
+	d.replyGen++
+	gen := d.replyGen
 	d.pub, d.consumeCh, d.replyQueue, d.loopDone = pub, ch, q.Name, done
 	d.mu.Unlock()
-	go d.receive(ch, deliveries, done)
+	go d.receive(ch, gen, deliveries, done)
 	d.bus.log.LogAttrs(ctx, slog.LevelDebug, "reply queue ready", attrOperation("consume"), attrQueue(q.Name))
 	return nil
 }
 
-func (d *dispatcher) receive(ch transport.Channel, deliveries <-chan amqp.Delivery, done chan struct{}) {
+func (d *dispatcher) receive(ch transport.Channel, gen uint64, deliveries <-chan amqp.Delivery, done chan struct{}) {
 	for dl := range deliveries {
 		d.route(&dl)
 	}
@@ -115,10 +155,10 @@ func (d *dispatcher) receive(ch transport.Channel, deliveries <-chan amqp.Delive
 	// The consumer ended. On a deliberate close or a lost connection that is
 	// expected; on a live connection the channel died under us.
 	d.mu.Lock()
-	unexpected := !d.closed && d.consumeCh == ch
+	unexpected := !d.closed && d.replyGen == gen && d.consumeCh == ch
 	d.mu.Unlock()
 	if _, _, ready := d.bus.sess.current(); unexpected && ready {
-		go d.recoverReplies(ch)
+		go d.recoverReplies(gen)
 	}
 }
 
@@ -144,37 +184,37 @@ func (d *dispatcher) route(dl *amqp.Delivery) {
 			attrOperation("reply"), attrCorrelationID(id), attrSize(len(dl.Body)), attrOutcome(outcomeDropped))
 		return
 	}
-	call.reply <- dl.Body
+	call.resolve(callResult{body: dl.Body})
 }
 
-func (d *dispatcher) connectionLost(error) {
+// failPending fails every call and stream in flight with err.
+func (d *dispatcher) failPending(err error) {
 	d.mu.Lock()
 	calls, streams := d.calls, d.streams
 	d.calls, d.streams = map[string]*pendingCall{}, map[string]*clientStream{}
-	d.pub, d.consumeCh, d.replyQueue = nil, nil, ""
 	d.mu.Unlock()
 	for _, c := range calls {
-		c.lost <- ErrDisconnected
+		c.resolve(callResult{err: err})
 	}
 	for _, s := range streams {
-		s.fail(ErrDisconnected)
+		s.fail(err)
 	}
+}
+
+func (d *dispatcher) connectionLost(error) {
+	d.failPending(ErrDisconnected)
+	d.mu.Lock()
+	d.pub, d.consumeCh, d.replyQueue = nil, nil, ""
+	d.mu.Unlock()
 }
 
 func (d *dispatcher) close() {
 	d.mu.Lock()
 	d.closed = true
 	pub, ch, done := d.pub, d.consumeCh, d.loopDone
-	calls, streams := d.calls, d.streams
-	d.calls, d.streams = map[string]*pendingCall{}, map[string]*clientStream{}
-	d.pub, d.consumeCh = nil, nil
+	d.pub, d.consumeCh, d.replyQueue = nil, nil, ""
 	d.mu.Unlock()
-	for _, c := range calls {
-		c.lost <- ErrClosed
-	}
-	for _, s := range streams {
-		s.fail(ErrClosed)
-	}
+	d.failPending(ErrClosed)
 	if ch != nil {
 		_ = ch.Close()
 	}
@@ -186,7 +226,8 @@ func (d *dispatcher) close() {
 	}
 }
 
-// channel waits for a usable publishing channel.
+// channel waits for a usable publishing channel and the reply queue the
+// request should name.
 func (d *dispatcher) channel(ctx context.Context) (*pubChannel, string, error) {
 	for {
 		if err := d.bus.sess.whenReady(ctx); err != nil {
@@ -198,41 +239,67 @@ func (d *dispatcher) channel(ctx context.Context) (*pubChannel, string, error) {
 		if closed {
 			return nil, "", ErrClosed
 		}
-		if pub != nil && !pub.isClosed() {
+		// Never hand out a channel without a reply queue: a request naming
+		// none would be served and its answer thrown away.
+		if pub != nil && !pub.isClosed() && replyTo != "" {
 			return pub, replyTo, nil
 		}
-		// Ready, but this component's channel died on a live connection
-		// (or restoration is completing). Rebuild it under the restore lock.
+		// Ready, but a channel of this component died on a live connection,
+		// or a restore is completing. Rebuild what is missing.
 		if err := d.repair(ctx); err != nil {
-			return nil, "", err
+			if !errors.Is(err, errConnectionGone) {
+				return nil, "", err
+			}
+			// The connection died under the repair; the supervisor is about
+			// to notice. Pause briefly so whenReady sees it.
+			if !sleepCtx(ctx, 10*time.Millisecond) {
+				return nil, "", ctx.Err()
+			}
 		}
 	}
 }
 
-// repair replaces the publishing channel after it closed while the
-// connection stayed up (a channel exception, for instance). The reply queue
-// is untouched, so calls awaiting replies are unaffected.
+// errConnectionGone reports a repair attempted on a connection that has died
+// but not yet been noticed: the caller should wait for readiness again.
+var errConnectionGone = errors.New("protobus: connection gone")
+
+// repair rebuilds whatever is missing on the current connection: the
+// publishing channel alone when only it died (a channel exception), or the
+// whole topology when the reply consumer is gone too.
 func (d *dispatcher) repair(ctx context.Context) error {
 	d.bus.sess.restoreMu.Lock()
 	defer d.bus.sess.restoreMu.Unlock()
 	d.mu.Lock()
-	old := d.pub
-	healthy := old != nil && !old.isClosed()
+	old, replyTo := d.pub, d.replyQueue
+	pubHealthy := old != nil && !old.isClosed()
 	d.mu.Unlock()
-	if healthy {
+	if pubHealthy && replyTo != "" {
 		return nil // repaired by someone else meanwhile
 	}
 	conn, _, ready := d.bus.sess.current()
 	if !ready {
 		return nil // a reconnection is under way; channel() waits for it
 	}
+	if conn.IsClosed() {
+		return errConnectionGone
+	}
+	if replyTo == "" {
+		if old != nil {
+			old.close()
+		}
+		if err := d.restoreTopology(ctx, conn); err != nil {
+			return connectionGoneOr(conn, err)
+		}
+		return nil
+	}
 	raw, err := conn.Channel()
 	if err != nil {
-		return err
+		return connectionGoneOr(conn, err)
 	}
 	pub, err := newPubChannel(raw, d.bus.cfg)
 	if err != nil {
-		return err
+		_ = raw.Close()
+		return connectionGoneOr(conn, err)
 	}
 	d.mu.Lock()
 	d.pub = pub
@@ -243,13 +310,20 @@ func (d *dispatcher) repair(ctx context.Context) error {
 	return nil
 }
 
+func connectionGoneOr(conn transport.Conn, err error) error {
+	if conn.IsClosed() || errors.Is(err, amqp.ErrClosed) {
+		return errConnectionGone
+	}
+	return err
+}
+
 // recoverReplies rebuilds the reply queue after its consumer died on a live
 // connection. Calls waiting on the old queue cannot receive their replies any
 // more, so they fail with ErrDisconnected.
-func (d *dispatcher) recoverReplies(dead transport.Channel) {
+func (d *dispatcher) recoverReplies(gen uint64) {
 	delay := d.bus.cfg.Reconnect.InitialDelay
 	for {
-		retry, err := d.tryRecoverReplies(dead)
+		retry, err := d.tryRecoverReplies(gen)
 		if !retry {
 			return
 		}
@@ -262,20 +336,24 @@ func (d *dispatcher) recoverReplies(dead transport.Channel) {
 	}
 }
 
-func (d *dispatcher) tryRecoverReplies(dead transport.Channel) (retry bool, err error) {
+func (d *dispatcher) tryRecoverReplies(gen uint64) (retry bool, err error) {
 	d.bus.sess.restoreMu.Lock()
 	defer d.bus.sess.restoreMu.Unlock()
 	d.mu.Lock()
-	stale := d.closed || d.consumeCh != dead
-	pub := d.pub
+	stale := d.closed || d.replyGen != gen
+	pub, dead := d.pub, d.consumeCh
 	d.mu.Unlock()
 	conn, _, ready := d.bus.sess.current()
 	if stale || !ready {
 		return false, nil // closed, already rebuilt, or a reconnection owns it
 	}
-	d.connectionLost(errChannelGone)
-	if pub != nil {
-		pub.close()
+	if dead != nil {
+		// First attempt: retire the dead consumer and what rode on it.
+		d.connectionLost(errChannelGone)
+		_ = dead.Close() // still open when the broker cancelled the consumer
+		if pub != nil {
+			pub.close()
+		}
 	}
 	if err := d.restoreTopology(d.bus.sess.ctx, conn); err != nil {
 		return true, err
@@ -314,65 +392,65 @@ func (d *dispatcher) call(ctx context.Context, routingKey string, body []byte, o
 		msg.MessageId = *o.messageID
 	}
 
-	if o.noReply {
-		return nil, d.publish(ctx, routingKey, false, msg, nil)
-	}
-
-	call := &pendingCall{reply: make(chan []byte, 1), lost: make(chan error, 1)}
-	if err := d.publish(ctx, routingKey, true, msg, call); err != nil {
-		return nil, err
-	}
-	select {
-	case reply := <-call.reply:
-		return reply, nil
-	case err := <-call.lost:
-		return nil, err
-	case <-ctx.Done():
-		d.forget(msg.CorrelationId)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, rpcTimeoutError(routingKey, msg.CorrelationId, ctx.Err())
+	timeout := func(err error) error {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return rpcTimeoutError(routingKey, msg.CorrelationId, err)
 		}
-		return nil, ctx.Err()
+		return err
 	}
-}
-
-// publish sends a request on the bus exchange. When call is non-nil it is
-// registered for the reply BEFORE the publish, because a fast service can
-// answer before the broker's confirm reaches us.
-func (d *dispatcher) publish(ctx context.Context, routingKey string, mandatory bool, msg amqp.Publishing, call *pendingCall) error {
+	var call *pendingCall
 	for {
 		pub, replyTo, err := d.channel(ctx)
 		if err != nil {
-			if call != nil && errors.Is(err, context.DeadlineExceeded) {
-				return rpcTimeoutError(routingKey, msg.CorrelationId, err)
-			}
-			return err
+			return nil, timeout(err)
 		}
-		if call != nil {
+		if !o.noReply {
+			// Registered BEFORE the publish: a fast service can answer before
+			// the broker's confirm reaches us.
+			call = newPendingCall()
 			msg.ReplyTo = replyTo
 			d.mu.Lock()
 			d.calls[msg.CorrelationId] = call
 			d.mu.Unlock()
 		}
-		err = pub.publish(ctx, d.bus.cfg.BusExchange, routingKey, mandatory, msg)
+		// Mandatory, fire-and-forget included: a request no service is bound
+		// to fails fast with ErrUnroutable rather than vanishing.
+		err = pub.publish(ctx, d.bus.cfg.BusExchange, routingKey, true, msg)
 		if err == nil {
-			return nil
+			break
 		}
 		if call != nil {
-			d.forget(msg.CorrelationId)
+			d.forget(msg.CorrelationId, call)
 		}
 		if errors.Is(err, errChannelGone) {
 			continue // never sent; wait for a channel and send again
 		}
 		// The publish outcome is the more specific answer than an expired
 		// deadline: "the request never left" beats "no reply in time".
-		return err
+		var pe *PublishError
+		if errors.As(err, &pe) && errors.Is(pe.Err, context.DeadlineExceeded) {
+			return nil, timeout(err)
+		}
+		return nil, err
+	}
+	if o.noReply {
+		return nil, nil
+	}
+	select {
+	case r := <-call.done:
+		return r.body, r.err
+	case <-ctx.Done():
+		d.forget(msg.CorrelationId, call)
+		return nil, timeout(ctx.Err())
 	}
 }
 
-func (d *dispatcher) forget(correlationID string) {
+// forget unregisters call, if it is still the one registered under id.
+func (d *dispatcher) forget(id string, call *pendingCall) {
 	d.mu.Lock()
-	delete(d.calls, correlationID)
+	if d.calls[id] == call {
+		delete(d.calls, id)
+	}
 	d.mu.Unlock()
 }
 
@@ -399,8 +477,8 @@ type clientStream struct {
 	notify  chan struct{} // buffered 1
 }
 
-func (d *dispatcher) newStream() *clientStream {
-	s := &clientStream{d: d, id: uuid.New(), lastSeq: -1, notify: make(chan struct{}, 1)}
+func (d *dispatcher) newStream(id string) *clientStream {
+	s := &clientStream{d: d, id: id, lastSeq: -1, notify: make(chan struct{}, 1)}
 	s.limits.chunks = d.bus.cfg.StreamMaxBufferedChunks
 	s.limits.bytes = d.bus.cfg.StreamMaxBufferedBytes
 	s.limits.total = d.bus.cfg.StreamMaxTotalBufferedBytes
@@ -472,11 +550,15 @@ func (s *clientStream) push(dl *amqp.Delivery) {
 
 func (s *clientStream) fail(err error) {
 	s.mu.Lock()
-	if !s.ended {
+	switch {
+	case s.ended && s.err == nil:
+		// Complete: every frame has arrived. Let the caller drain it; the
+		// failure came too late to matter.
+	case !s.ended:
 		s.err = err
 		s.ended = true
+		s.dropBufferLocked()
 	}
-	s.dropBufferLocked()
 	s.mu.Unlock()
 	s.wake()
 }
@@ -499,11 +581,21 @@ func (s *clientStream) next() (chunk []byte, done bool, err error) {
 	return nil, s.ended, nil
 }
 
+// errStreamReleased marks a stream its caller has finished with, so a frame
+// still on its way is dropped rather than buffered for no one.
+var errStreamReleased = errors.New("protobus: stream released")
+
 func (s *clientStream) release() {
 	s.d.mu.Lock()
-	delete(s.d.streams, s.id)
+	if s.d.streams[s.id] == s {
+		delete(s.d.streams, s.id)
+	}
 	s.d.mu.Unlock()
 	s.mu.Lock()
+	s.ended = true
+	if s.err == nil {
+		s.err = errStreamReleased
+	}
 	s.dropBufferLocked()
 	s.mu.Unlock()
 }
@@ -521,16 +613,17 @@ func (d *dispatcher) stream(ctx context.Context, routingKey string, body []byte,
 		if o.idleTimeout > 0 {
 			idle = o.idleTimeout
 		}
-		s := d.newStream()
-		defer s.release()
-
 		msg := amqp.Publishing{
 			ContentType:   contentTypeOctetStream,
-			CorrelationId: s.id,
+			CorrelationId: uuid.New(),
 			DeliveryMode:  amqp.Persistent,
 			Body:          body,
 		}
-		if err := d.publishStream(ctx, routingKey, msg, s); err != nil {
+		s, err := d.publishStream(ctx, routingKey, msg)
+		if s != nil {
+			defer s.release()
+		}
+		if err != nil {
 			yield(nil, err)
 			return
 		}
@@ -581,23 +674,31 @@ func resetTimer(t *time.Timer, d time.Duration) {
 	t.Reset(d)
 }
 
-func (d *dispatcher) publishStream(ctx context.Context, routingKey string, msg amqp.Publishing, s *clientStream) error {
+// publishStream registers a stream and publishes its request. Each attempt
+// gets a fresh stream, so the failure of an attempt that never left cannot
+// end the stream of the one that did.
+func (d *dispatcher) publishStream(ctx context.Context, routingKey string, msg amqp.Publishing) (*clientStream, error) {
 	for {
 		pub, replyTo, err := d.channel(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		s := d.newStream(msg.CorrelationId)
 		msg.ReplyTo = replyTo
 		d.mu.Lock()
 		d.streams[s.id] = s
 		d.mu.Unlock()
-		// Not mandatory, matching the other ports: an unbound streaming
-		// method surfaces as the idle timeout.
-		err = pub.publish(ctx, d.bus.cfg.BusExchange, routingKey, false, msg)
+		// Mandatory, so a streaming method no service is bound to fails fast
+		// with ErrUnroutable instead of waiting out the idle timeout.
+		err = pub.publish(ctx, d.bus.cfg.BusExchange, routingKey, true, msg)
+		if err == nil {
+			return s, nil
+		}
+		s.release()
 		if errors.Is(err, errChannelGone) {
 			continue
 		}
-		return err
+		return nil, err
 	}
 }
 

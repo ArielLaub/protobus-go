@@ -101,7 +101,7 @@ func TestEventWildcardsAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	var mu sync.Mutex
 	var order []string
 	done := make(chan struct{}, 8)
@@ -145,7 +145,7 @@ func TestEventMatchesTheDeliveredRoutingKeyNotTheBodyTopic(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("")
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	public := newReceived[*testpb.Ping]()
 	admin := newReceived[*testpb.Ping]()
 	_ = Subscribe(testCtx(t), l, public.handler(nil), WithTopic("PUBLIC.#"))
@@ -171,7 +171,7 @@ func TestEventTypeMismatchIsSkipped(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("")
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	pings := newReceived[*testpb.Ping]()
 	orders := newReceived[*testpb.OrderCreated]()
 	_ = Subscribe(testCtx(t), l, pings.handler(nil), WithTopic("shared"))
@@ -189,7 +189,7 @@ func TestEventSubscribeAll(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("")
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	got := make(chan proto.Message, 4)
 	err := l.SubscribeAll(testCtx(t), func(_ context.Context, m proto.Message, _ EventInfo) error {
 		got <- m
@@ -225,7 +225,7 @@ func TestEventFailureWithoutRetryDropsAndKeepsConsuming(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("Sub.Events")
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	got := newReceived[*testpb.Ping]()
 	_ = Subscribe(testCtx(t), l, got.handler(func(p *testpb.Ping) error {
 		if p.Id == "bad" {
@@ -262,7 +262,7 @@ func TestEventRetryRedeliversOnlyToTheFailingSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, _ := bus.NewEventListener("Other.Events")
-	t.Cleanup(other.Close)
+	t.Cleanup(func() { _ = other.Close() })
 	steady := newReceived[*testpb.OrderCreated]()
 	_ = Subscribe(testCtx(t), other, steady.handler(nil))
 	_ = other.Start(testCtx(t))
@@ -296,7 +296,7 @@ func TestEventRetryDeadLettersAfterMaxRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	got := newReceived[*testpb.Ping]()
 	_ = Subscribe(testCtx(t), l, got.handler(func(*testpb.Ping) error { return errors.New("always") }))
 	_ = l.Start(testCtx(t))
@@ -315,7 +315,7 @@ func TestEventHandledErrorGoesStraightToTheDLQWhenRetryIsOn(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("Sub.Events", WithEventRetry(EventRetryPolicy{MaxRetries: 5, Delay: 10 * time.Millisecond}))
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	got := newReceived[*testpb.Ping]()
 	_ = Subscribe(testCtx(t), l, got.handler(func(*testpb.Ping) error { return NewHandledError("POISON", "refused") }))
 	_ = l.Start(testCtx(t))
@@ -341,7 +341,7 @@ func TestEventListenerHandlesInParallel(t *testing.T) {
 	b := fakebroker.New()
 	bus := dialTest(t, b, fastConfig())
 	l, _ := bus.NewEventListener("Par.Events", WithEventConcurrency(4))
-	t.Cleanup(l.Close)
+	t.Cleanup(func() { _ = l.Close() })
 	var running, peak atomic.Int32
 	done := make(chan struct{}, 8)
 	_ = Subscribe(testCtx(t), l, func(context.Context, *testpb.Ping, EventInfo) error {

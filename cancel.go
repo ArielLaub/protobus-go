@@ -170,7 +170,14 @@ func (b *Bus) ensureCancelListener(ctx context.Context) error {
 		b.mu.Unlock()
 		return nil
 	}
-	b.cancelSub = &cancelListener{bus: b}
+	sub := &cancelListener{bus: b}
+	b.cancelSub = sub
 	b.mu.Unlock()
-	return b.attach(ctx, b.cancelSub)
+	if _, err := b.attach(ctx, sub); err != nil {
+		b.mu.Lock()
+		b.cancelSub = nil // let a later Start try again
+		b.mu.Unlock()
+		return err
+	}
+	return nil
 }

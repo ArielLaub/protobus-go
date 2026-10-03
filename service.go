@@ -49,15 +49,15 @@ type EventRetryPolicy struct {
 }
 
 type serviceOptions struct {
-	instance          string
-	maxConcurrent     int
-	retry             RetryPolicy
-	earlyAck          bool
-	processingTimeout time.Duration
-	maxPriority       *uint8
-	eventRetry        EventRetryPolicy
-	eventConcurrency  int
-	unaryInterceptors []UnaryServerInterceptor
+	instance           string
+	maxConcurrent      int
+	retry              RetryPolicy
+	earlyAck           bool
+	processingTimeout  time.Duration
+	maxPriority        *uint8
+	eventRetry         EventRetryPolicy
+	eventConcurrency   int
+	unaryInterceptors  []UnaryServerInterceptor
 	streamInterceptors []StreamServerInterceptor
 }
 
@@ -71,7 +71,9 @@ func WithMaxConcurrent(n int) ServiceOption {
 
 // WithRetry replaces DefaultRetryPolicy. RetryPolicy{} disables retries and
 // the dead-letter queue.
-func WithRetry(p RetryPolicy) ServiceOption { return serviceOpt(func(o *serviceOptions) { o.retry = p }) }
+func WithRetry(p RetryPolicy) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.retry = p })
+}
 
 // WithEarlyAck acknowledges each request on arrival instead of after its
 // reply: at-most-once delivery, with no retries and no dead-letter queue. A
@@ -139,15 +141,21 @@ func (b *Bus) Register(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Ser
 	if impl == nil {
 		return nil, errors.New("protobus: Register: nil implementation")
 	}
+	if desc == nil {
+		return nil, errors.New("protobus: Register: nil ServiceDesc")
+	}
 	if desc.HandlerType != nil {
-		want := reflect.TypeOf(desc.HandlerType).Elem()
-		if got := reflect.TypeOf(impl); !got.Implements(want) {
-			return nil, fmt.Errorf("protobus: Register: %v does not implement %v", got, want)
+		ht := reflect.TypeOf(desc.HandlerType)
+		if ht.Kind() != reflect.Pointer || ht.Elem().Kind() != reflect.Interface {
+			return nil, fmt.Errorf("protobus: Register: HandlerType must be a nil pointer to an interface, got %v", ht)
+		}
+		if got := reflect.TypeOf(impl); !got.Implements(ht.Elem()) {
+			return nil, fmt.Errorf("protobus: Register: %v does not implement %v", got, ht.Elem())
 		}
 	}
 	d, err := b.files.FindDescriptorByName(protoreflect.FullName(desc.ServiceName))
 	if err != nil {
-		return nil, fmt.Errorf("%w %q: %v", ErrUnknownService, desc.ServiceName, err)
+		return nil, fmt.Errorf("%w %q: %w", ErrUnknownService, desc.ServiceName, err)
 	}
 	sd, ok := d.(protoreflect.ServiceDescriptor)
 	if !ok {
@@ -299,28 +307,39 @@ func declareRetryTopology(ch transport.Channel, rs *retrySpec, delay time.Durati
 
 // Start declares the service's topology and begins serving requests and
 // event subscriptions. It waits for the connection if a reconnection is under
-// way.
+// way. It is idempotent, and a start that failed can be retried.
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return fmt.Errorf("protobus: service %s already started", s.name)
+		return nil
 	}
-	s.started = true
 	events := s.events
 	s.mu.Unlock()
 
 	if err := s.requests.start(ctx); err != nil {
 		return fmt.Errorf("protobus: starting %s: %w", s.name, err)
 	}
+	fail := func(err error) error {
+		// Leave nothing half-started: a consumer serving requests that
+		// Shutdown does not know about would be cut off mid-work.
+		s.requests.stopConsuming()
+		return err
+	}
 	if events != nil {
 		if err := events.Start(ctx); err != nil {
-			return err
+			return fail(err)
 		}
 	}
 	if err := s.bus.ensureCancelListener(ctx); err != nil {
-		return err
+		if events != nil {
+			events.consumer.stopConsuming()
+		}
+		return fail(err)
 	}
+	s.mu.Lock()
+	s.started = true
+	s.mu.Unlock()
 	s.bus.mu.Lock()
 	s.bus.services = append(s.bus.services, s)
 	s.bus.mu.Unlock()
@@ -332,13 +351,27 @@ func (s *Service) Start(ctx context.Context) error {
 // work in hand can finish and settle. It is the first step of a graceful
 // shutdown (Bus.Shutdown and Run do it for you), and it is final: a
 // reconnection does not resume consumption.
-func (s *Service) StopConsuming(context.Context) error {
+func (s *Service) StopConsuming(ctx context.Context) error {
 	s.requests.stopConsuming()
 	s.mu.Lock()
 	events := s.events
 	s.mu.Unlock()
 	if events != nil {
-		events.consumer.stopConsuming()
+		return events.StopConsuming(ctx)
+	}
+	return nil
+}
+
+// Close stops the service and closes its channels at once. Handlers still
+// running are cancelled and their requests redelivered; use Bus.Shutdown to
+// let them finish. It is idempotent.
+func (s *Service) Close() error {
+	s.requests.close()
+	s.mu.Lock()
+	events := s.events
+	s.mu.Unlock()
+	if events != nil {
+		return events.Close()
 	}
 	return nil
 }

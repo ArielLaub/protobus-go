@@ -352,7 +352,7 @@ func goClientScenario(t *testing.T, bus *protobus.Bus, target string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer l.Close()
+		defer func() { _ = l.Close() }()
 		got := make(chan *interop.Ping, 1)
 		err = protobus.Subscribe(callCtx(t), l, func(_ context.Context, p *interop.Ping, _ protobus.EventInfo) error {
 			got <- p
@@ -446,7 +446,7 @@ func TestMixedReplicasShareOneRetryLadder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	err = protobus.Subscribe(callCtx(t), l, func(_ context.Context, a *interop.Attempted, _ protobus.EventInfo) error {
 		attempts <- a
 		return nil

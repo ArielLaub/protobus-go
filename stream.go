@@ -124,6 +124,8 @@ func (c *consumer) serviceErrorBody(s *serverStream, err error) []byte {
 // without the caller seeing it twice. A failure to publish a frame, though,
 // fails the attempt like any other infrastructure error.
 func (s *Service) serveStream(ctx context.Context, d *amqp.Delivery, ctl *deliveryControl, method string, st StreamDesc, dec DecodeFunc) handlerResult {
+	// Only a stream can be cancelled by its caller.
+	ctl.cancellable()
 	ss := &serverStream{ctx: ctx, c: s.requests, pub: ctl.pub, d: d, method: method}
 	err := st.Handler(s.impl, ctx, dec, ss, s.streamIC)
 

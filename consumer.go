@@ -38,6 +38,26 @@ type deliveryControl struct {
 	pub      *pubChannel
 	once     sync.Once
 	disarmed chan struct{}
+
+	cancels  *cancelRegistry
+	id       string
+	cancel   context.CancelCauseFunc
+	unlisten func()
+}
+
+// cancellable lets the caller's cancel notices reach this delivery. Only
+// streams register: a cancel is how a streaming caller abandons its call,
+// and no port sends one for anything else.
+func (c *deliveryControl) cancellable() {
+	if c.unlisten == nil && c.cancels != nil {
+		c.unlisten = c.cancels.add(c.id, c.cancel)
+	}
+}
+
+func (c *deliveryControl) release() {
+	if c.unlisten != nil {
+		c.unlisten()
+	}
 }
 
 // disarmTimeout lifts the processing timeout for the rest of this delivery.
@@ -87,19 +107,26 @@ type consumer struct {
 	bus  *Bus
 	spec consumerSpec
 
-	mu        sync.Mutex
-	ch        transport.Channel
-	pub       *pubChannel
-	queue     string
-	tag       string
-	consuming bool // the application wants deliveries
-	closed    bool
-	loopDone  chan struct{}
-	sem       chan struct{}
+	mu         sync.Mutex
+	ch         transport.Channel
+	pub        *pubChannel
+	queue      string
+	tag        string
+	consuming  bool // the application wants deliveries
+	closed     bool
+	loopDone   chan struct{}
+	loopStop   chan struct{} // closed to make the current loop let go
+	sem        chan struct{}
+	unregister func()
+	// handlers in flight, so a lost connection or a close can cancel their
+	// contexts: their deliveries can no longer be settled.
+	active map[*activeHandler]struct{}
 }
 
+type activeHandler struct{ cancel context.CancelCauseFunc }
+
 func newConsumer(b *Bus, spec consumerSpec) *consumer {
-	c := &consumer{bus: b, spec: spec}
+	c := &consumer{bus: b, spec: spec, active: map[*activeHandler]struct{}{}}
 	if !spec.lateAck && spec.concurrency > 0 {
 		c.sem = make(chan struct{}, spec.concurrency)
 	}
@@ -115,6 +142,12 @@ func (c *consumer) queueName() string {
 // restoreTopology declares the consumer's topology on a fresh channel and,
 // if the application is consuming, starts the consumer.
 func (c *consumer) restoreTopology(ctx context.Context, conn transport.Conn) error {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil
+	}
 	ch, err := conn.Channel()
 	if err != nil {
 		return err
@@ -124,10 +157,11 @@ func (c *consumer) restoreTopology(ctx context.Context, conn transport.Conn) err
 	if err != nil {
 		return fail(err)
 	}
-	if c.spec.lateAck {
-		if err := ch.Qos(c.spec.prefetch, 0, false); err != nil {
-			return fail(err)
-		}
+	// A prefetch bounds what the broker pushes into process memory. Under
+	// early ack it is the only bound: deliveries are acknowledged only once a
+	// handler slot is free.
+	if err := ch.Qos(c.spec.prefetch, 0, false); err != nil {
+		return fail(err)
 	}
 	if err := ch.ExchangeDeclare(c.spec.exchange, "topic", true, false, false, false, nil); err != nil {
 		return fail(fmt.Errorf("declaring exchange %s: %w", c.spec.exchange, err))
@@ -149,11 +183,21 @@ func (c *consumer) restoreTopology(ctx context.Context, conn transport.Conn) err
 	}
 
 	c.mu.Lock()
-	old, oldDone := c.pub, c.loopDone
-	c.ch, c.pub, c.queue, c.loopDone = ch, pub, q.Name, nil
-	consuming := c.consuming && !c.closed
+	if c.closed {
+		c.mu.Unlock()
+		pub.close()
+		return nil
+	}
+	old, oldDone, oldStop := c.pub, c.loopDone, c.loopStop
+	c.ch, c.pub, c.queue, c.loopDone, c.loopStop = ch, pub, q.Name, nil, nil
+	consuming := c.consuming
 	c.mu.Unlock()
 	if old != nil && old != pub {
+		// The old loop lets go of any delivery it holds (an early-ack loop
+		// can be parked on a handler slot), so waiting for it is short.
+		if oldStop != nil {
+			close(oldStop)
+		}
 		old.close()
 		if oldDone != nil {
 			<-oldDone
@@ -178,16 +222,27 @@ func (c *consumer) startConsuming(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("consuming %s: %w", queue, err)
 	}
-	done := make(chan struct{})
+	done, stop := make(chan struct{}), make(chan struct{})
 	c.mu.Lock()
-	c.tag, c.loopDone = tag, done
+	// The application may have stopped consuming (a shutdown during a
+	// reconnection) while the consumer was being registered: honour that.
+	keep := c.consuming && !c.closed && c.ch == ch
+	if keep {
+		c.tag = tag
+	}
+	c.loopDone, c.loopStop = done, stop
 	c.mu.Unlock()
-	go c.loop(ch, pub, deliveries, done)
+	go c.loop(ch, pub, deliveries, done, stop)
+	if !keep {
+		_ = ch.Cancel(tag, false)
+		return nil
+	}
 	c.bus.log.LogAttrs(ctx, slog.LevelDebug, "consuming", attrOperation("consume"), attrQueue(queue), attrService(c.spec.describe))
 	return nil
 }
 
-// start declares the topology and begins consuming.
+// start declares the topology and begins consuming. A start that fails can
+// be retried.
 func (c *consumer) start(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
@@ -196,16 +251,34 @@ func (c *consumer) start(ctx context.Context) error {
 	}
 	c.consuming = true
 	c.mu.Unlock()
-	return c.bus.attach(ctx, c)
+	unregister, err := c.bus.attach(ctx, c)
+	if err != nil {
+		c.mu.Lock()
+		c.consuming = false
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Lock()
+	c.unregister = unregister
+	c.mu.Unlock()
+	return nil
 }
 
-func (c *consumer) loop(ch transport.Channel, pub *pubChannel, deliveries <-chan amqp.Delivery, done chan struct{}) {
+func (c *consumer) loop(ch transport.Channel, pub *pubChannel, deliveries <-chan amqp.Delivery, done, stop chan struct{}) {
 	defer close(done)
 	for d := range deliveries {
-		if c.sem != nil {
-			c.sem <- struct{}{}
-		}
+		// Counted from receipt, so a drain cannot observe zero while a
+		// delivery waits for a handler slot.
 		c.bus.deliveries.add()
+		if c.sem != nil {
+			select {
+			case c.sem <- struct{}{}:
+			case <-stop:
+				// Let go: unacknowledged, the broker redelivers it.
+				c.bus.deliveries.done()
+				continue
+			}
+		}
 		go func() {
 			defer c.bus.deliveries.done()
 			if c.sem != nil {
@@ -248,7 +321,7 @@ func (c *consumer) tryRecover(dead transport.Channel) (retry bool, err error) {
 	stale := c.closed || !c.consuming || c.ch != dead
 	c.mu.Unlock()
 	conn, _, ready := c.bus.sess.current()
-	if stale || !ready {
+	if stale || !ready || conn.IsClosed() {
 		return false, nil
 	}
 	c.bus.log.LogAttrs(c.bus.sess.ctx, slog.LevelWarn, "consumer channel closed on a live connection; rebuilding",
@@ -259,7 +332,26 @@ func (c *consumer) tryRecover(dead transport.Channel) (retry bool, err error) {
 	return false, nil
 }
 
-func (c *consumer) connectionLost(error) {}
+// connectionLost cancels the handlers of a late-ack consumer: their
+// deliveries can no longer be acknowledged and will be redelivered, so the
+// work is wasted. Early-acked work is the only copy and is left to finish.
+func (c *consumer) connectionLost(error) {
+	if c.spec.lateAck {
+		c.cancelActive(ErrDisconnected)
+	}
+}
+
+func (c *consumer) cancelActive(cause error) {
+	c.mu.Lock()
+	active := make([]*activeHandler, 0, len(c.active))
+	for h := range c.active {
+		active = append(active, h)
+	}
+	c.mu.Unlock()
+	for _, h := range active {
+		h.cancel(cause)
+	}
+}
 
 // stopConsuming cancels the consumer, leaving the channel open so work in
 // hand can still publish its replies and settle. It is the first step of a
@@ -275,13 +367,27 @@ func (c *consumer) stopConsuming() {
 	}
 }
 
+// close stops the consumer for good and closes its channel. Handlers still
+// running are cancelled with ErrClosed: their deliveries can no longer settle.
+// It is idempotent.
 func (c *consumer) close() {
 	c.stopConsuming()
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
 	c.closed = true
-	pub, done := c.pub, c.loopDone
+	pub, done, stop, unregister := c.pub, c.loopDone, c.loopStop, c.unregister
 	c.pub, c.ch = nil, nil
 	c.mu.Unlock()
+	if unregister != nil {
+		unregister()
+	}
+	if stop != nil {
+		close(stop)
+	}
+	c.cancelActive(ErrClosed)
 	if pub != nil {
 		pub.close()
 	}
@@ -291,13 +397,16 @@ func (c *consumer) close() {
 }
 
 // bind adds a binding to the live channel. Bindings are also re-applied on
-// every restore, so one made while disconnected is not lost.
+// every restore. It runs under the restore lock, so it cannot slip between a
+// restore reading the bindings and installing its channel.
 func (c *consumer) bind(key string) error {
+	c.bus.sess.restoreMu.Lock()
+	defer c.bus.sess.restoreMu.Unlock()
 	c.mu.Lock()
 	ch, queue := c.ch, c.queue
 	c.mu.Unlock()
 	if ch == nil || ch.IsClosed() {
-		return nil
+		return nil // the next restore applies it
 	}
 	return ch.QueueBind(queue, key, c.spec.exchange, false, nil)
 }
@@ -310,20 +419,33 @@ func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
 		// Early ack: at most once. Retries and dead-lettering are impossible,
 		// but a failure is still reported to the caller.
 		if err := d.Ack(false); err != nil {
-			log.LogAttrs(context.Background(), slog.LevelWarn, "early ack failed", attrOperation("ack"),
-				attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), attrSafeError(err))
+			// The channel is gone and the broker will redeliver the message.
+			// Running it here as well would break at-most-once.
+			log.LogAttrs(context.Background(), slog.LevelWarn, "early ack failed; leaving the message to its redelivery",
+				attrOperation("ack"), attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), attrSafeError(err))
+			return
 		}
 	}
 
 	ctx, cancel := context.WithCancelCause(c.bus.sess.ctx)
 	defer cancel(nil)
-	defer c.bus.cancels.add(d.CorrelationId, cancel)()
+	h := &activeHandler{cancel: cancel}
+	c.mu.Lock()
+	c.active[h] = struct{}{}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.active, h)
+		c.mu.Unlock()
+	}()
 
-	ctl := &deliveryControl{pub: pub, disarmed: make(chan struct{})}
+	ctl := &deliveryControl{pub: pub, disarmed: make(chan struct{}), cancels: c.bus.cancels, id: d.CorrelationId, cancel: cancel}
+	defer ctl.release()
 	start := time.Now()
 	res := c.run(ctx, cancel, d, ctl)
 
-	if errors.Is(context.Cause(ctx), ErrCancelled) {
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, ErrCancelled):
 		// The caller asked to stop. That is a normal ending: settle without
 		// a reply, a retry or the dead-letter queue.
 		if c.spec.lateAck {
@@ -331,6 +453,9 @@ func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
 		}
 		log.LogAttrs(ctx, slog.LevelDebug, "delivery ended by its caller", attrOperation("consume"),
 			attrCorrelationID(d.CorrelationId), attrOutcome(outcomeCancelled), attrDuration(time.Since(start)))
+		return
+	case errors.Is(cause, ErrDisconnected), errors.Is(cause, ErrClosed):
+		// Its channel is gone; the broker redelivers it.
 		return
 	}
 	c.settle(d, pub, res)

@@ -255,7 +255,9 @@ func TestInvokeRejectsAnInvalidMessageIDBeforeAnyIO(t *testing.T) {
 			t.Errorf("id %q: got %v", id, err)
 		}
 	}
-	if err := c.Invoke(testCtx(t), "add", &testpb.AddRequest{}, &testpb.AddResponse{}, WithMessageID(strings.Repeat("x", 255)), NoReply()); err != nil {
+	// Nothing serves Test.Calc here, so the valid id is published and
+	// returned as unroutable: it got as far as the broker.
+	if err := c.Invoke(testCtx(t), "add", &testpb.AddRequest{}, &testpb.AddResponse{}, WithMessageID(strings.Repeat("x", 255)), NoReply()); !errors.Is(err, ErrUnroutable) {
 		t.Fatalf("255 bytes is the limit, inclusive: %v", err)
 	}
 	if got := len(b.OpsOf("publish")) - before; got != 1 {
@@ -276,12 +278,11 @@ func TestInvokeNoReply(t *testing.T) {
 	if d.ReplyTo != "" {
 		t.Fatal("a fire-and-forget request asks for no reply")
 	}
-	if b.OpsOf("publish")[0].Mandatory {
-		t.Fatal("a fire-and-forget request is not mandatory")
+	if !b.OpsOf("publish")[0].Mandatory {
+		t.Fatal("a fire-and-forget request is mandatory, so a missing service is reported")
 	}
-	// Unbound fire-and-forget is fine.
-	if err := NewClient(bus, "Nobody.Here").Invoke(testCtx(t), "x", &testpb.AddRequest{}, &out, NoReply()); err != nil {
-		t.Fatalf("unrouted fire-and-forget: %v", err)
+	if err := NewClient(bus, "Nobody.Here").Invoke(testCtx(t), "x", &testpb.AddRequest{}, &out, NoReply()); !errors.Is(err, ErrUnroutable) {
+		t.Fatalf("an unbound fire-and-forget request must fail fast: %v", err)
 	}
 }
 

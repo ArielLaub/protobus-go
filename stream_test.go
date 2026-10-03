@@ -79,8 +79,18 @@ func TestStreamDeliversChunksInOrderWithFraming(t *testing.T) {
 			req = op
 		}
 	}
-	if req.Mandatory {
-		t.Fatal("a streaming request is not mandatory, matching the other ports")
+	if !req.Mandatory {
+		t.Fatal("a streaming request is mandatory, so an unbound method fails fast")
+	}
+}
+
+func TestStreamToAnUnboundServiceFailsFast(t *testing.T) {
+	b := fakebroker.New()
+	bus := dialTest(t, b, fastConfig())
+	start := time.Now()
+	_, err := collect(t, newCalcClient(bus).Count(testCtx(t), &testpb.CountRequest{N: 1}))
+	if !errors.Is(err, ErrUnroutable) || time.Since(start) > time.Second {
+		t.Fatalf("got %v after %v", err, time.Since(start))
 	}
 }
 

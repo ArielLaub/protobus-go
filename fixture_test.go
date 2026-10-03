@@ -85,15 +85,25 @@ var calcServiceDesc = ServiceDesc{
 	HandlerType: (*CalcServer)(nil),
 	Methods: []MethodDesc{
 		unaryMethod("add", func() *testpb.AddRequest { return new(testpb.AddRequest) },
-			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) { return s.Add(ctx, in) }),
+			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) {
+				return s.Add(ctx, in)
+			}),
 		unaryMethod("fail", func() *testpb.FailRequest { return new(testpb.FailRequest) },
-			func(s CalcServer, ctx context.Context, in *testpb.FailRequest) (proto.Message, error) { return s.Fail(ctx, in) }),
+			func(s CalcServer, ctx context.Context, in *testpb.FailRequest) (proto.Message, error) {
+				return s.Fail(ctx, in)
+			}),
 		unaryMethod("slow", func() *testpb.SlowRequest { return new(testpb.SlowRequest) },
-			func(s CalcServer, ctx context.Context, in *testpb.SlowRequest) (proto.Message, error) { return s.Slow(ctx, in) }),
+			func(s CalcServer, ctx context.Context, in *testpb.SlowRequest) (proto.Message, error) {
+				return s.Slow(ctx, in)
+			}),
 		unaryMethod("echo", func() *testpb.Order { return new(testpb.Order) },
-			func(s CalcServer, ctx context.Context, in *testpb.Order) (proto.Message, error) { return s.Echo(ctx, in) }),
+			func(s CalcServer, ctx context.Context, in *testpb.Order) (proto.Message, error) {
+				return s.Echo(ctx, in)
+			}),
 		unaryMethod("missing", func() *testpb.AddRequest { return new(testpb.AddRequest) },
-			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) { return s.Missing(ctx, in) }),
+			func(s CalcServer, ctx context.Context, in *testpb.AddRequest) (proto.Message, error) {
+				return s.Missing(ctx, in)
+			}),
 	},
 	Streams: []StreamDesc{
 		streamMethod("count", func() *testpb.CountRequest { return new(testpb.CountRequest) },

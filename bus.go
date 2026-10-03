@@ -2,7 +2,6 @@ package protobus
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,10 +35,11 @@ type Bus struct {
 	deliveries inflight // deliveries received and not yet settled
 	handlers   inflight // handler goroutines still running
 
-	mu       sync.Mutex
-	services []*Service
-	closers  []func()
-	closed   bool
+	mu        sync.Mutex
+	services  []*Service
+	listeners []*EventListener
+	closers   []func()
+	closed    bool
 }
 
 // Dial connects to the broker at url and prepares the bus for calls and
@@ -94,7 +94,7 @@ func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
 		component
 		closer
 	}{b.dispatcher, b.events} {
-		if err := b.attach(ctx, c); err != nil {
+		if _, err := b.attach(ctx, c); err != nil {
 			_ = b.Close()
 			return nil, err
 		}
@@ -105,28 +105,58 @@ func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
 type closer interface{ close() }
 
 // attach initialises c on the current connection and enrols it in
-// restoration, atomically with respect to reconnection.
+// restoration, atomically with respect to reconnection. The returned function
+// unenrols it.
 func (b *Bus) attach(ctx context.Context, c interface {
 	component
 	closer
-}) error {
-	if err := b.sess.whenReady(ctx); err != nil {
-		return err
+}) (unregister func(), err error) {
+	for {
+		if err := b.sess.whenReady(ctx); err != nil {
+			return nil, err
+		}
+		unregister, retry, err := b.attachOnce(ctx, c)
+		if !retry {
+			return unregister, err
+		}
+		// The connection was not ready after all: a reconnection had restored
+		// it but not yet announced it, or it dropped. Wait again.
 	}
+}
+
+func (b *Bus) attachOnce(ctx context.Context, c interface {
+	component
+	closer
+}) (unregister func(), retry bool, err error) {
 	b.sess.restoreMu.Lock()
 	defer b.sess.restoreMu.Unlock()
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return nil, false, ErrClosed
+	}
 	conn, _, ready := b.sess.current()
 	if !ready {
-		return fmt.Errorf("%w: the connection dropped while starting", ErrNotReady)
+		return nil, true, nil
 	}
 	if err := c.restoreTopology(ctx, conn); err != nil {
-		return err
+		if conn.IsClosed() {
+			return nil, true, nil
+		}
+		return nil, false, err
 	}
-	unregister := b.sess.register(c)
+	unreg := b.sess.register(c)
 	b.mu.Lock()
-	b.closers = append(b.closers, func() { unregister(); c.close() })
+	if b.closed {
+		b.mu.Unlock()
+		unreg()
+		c.close()
+		return nil, false, ErrClosed
+	}
+	b.closers = append(b.closers, func() { unreg(); c.close() })
 	b.mu.Unlock()
-	return nil
+	return unreg, false, nil
 }
 
 // Config returns the bus's configuration.
@@ -165,12 +195,16 @@ func (b *Bus) Drain(ctx context.Context) error {
 func (b *Bus) Shutdown(ctx context.Context) error {
 	b.mu.Lock()
 	services := append([]*Service(nil), b.services...)
+	listeners := append([]*EventListener(nil), b.listeners...)
 	b.mu.Unlock()
 	for _, s := range services {
 		if err := s.StopConsuming(ctx); err != nil {
 			b.log.LogAttrs(ctx, slog.LevelWarn, "failed to stop consuming", attrOperation("shutdown"),
 				attrService(s.Name()), attrSafeError(err))
 		}
+	}
+	for _, l := range listeners {
+		_ = l.StopConsuming(ctx)
 	}
 	drainCtx, cancel := context.WithTimeout(ctx, b.cfg.ShutdownDrainTimeout)
 	defer cancel()
@@ -181,7 +215,7 @@ func (b *Bus) Shutdown(ctx context.Context) error {
 			attrOperation("shutdown"), slog.Int("inFlight", b.InFlight()), attrDuration(time.Since(start)))
 		drainErr = fmt.Errorf("protobus: shutdown drain incomplete: %w", drainErr)
 	}
-	if err := b.Close(); err != nil && !errors.Is(err, ErrClosed) {
+	if err := b.Close(); err != nil {
 		return err
 	}
 	return drainErr

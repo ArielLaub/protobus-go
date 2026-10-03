@@ -32,7 +32,7 @@ func Play(ctx context.Context, bus *protobus.Bus, out io.Writer, seed uint64) (R
 	if err != nil {
 		return Result{}, err
 	}
-	defer results.Close()
+	defer func() { _ = results.Close() }()
 	over := make(chan *combat.GameOver, 1)
 	err = protobus.Subscribe(ctx, results, func(_ context.Context, ev *combat.GameOver, _ protobus.EventInfo) error {
 		select {

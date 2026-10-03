@@ -100,7 +100,7 @@ func (b *Bus) RegisterDynamic(service string, h DynamicHandlers, opts ...Service
 func (b *Bus) serviceDescriptor(name string) (protoreflect.ServiceDescriptor, error) {
 	d, err := b.files.FindDescriptorByName(protoreflect.FullName(name))
 	if err != nil {
-		return nil, fmt.Errorf("%w %q: %v", ErrUnknownService, name, err)
+		return nil, fmt.Errorf("%w %q: %w", ErrUnknownService, name, err)
 	}
 	sd, ok := d.(protoreflect.ServiceDescriptor)
 	if !ok {
