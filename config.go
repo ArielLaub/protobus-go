@@ -57,8 +57,8 @@ type Config struct {
 	// ProcessingTimeout caps how long a service spends on one unary request
 	// before the attempt is failed (and retried). MESSAGE_PROCESSING_TIMEOUT
 	ProcessingTimeout time.Duration
-	// RPCTimeout is how long a caller waits for a reply when its context
-	// carries no earlier deadline. RPC_CALL_TIMEOUT_MS
+	// RPCTimeout bounds a call whose context has no deadline and that sets
+	// no WithTimeout. RPC_CALL_TIMEOUT_MS
 	RPCTimeout time.Duration
 	// StreamIdleTimeout is the longest gap a streaming caller tolerates
 	// between chunks. STREAM_IDLE_TIMEOUT_MS
@@ -69,16 +69,17 @@ type Config struct {
 	// PublishConfirmTimeout bounds the wait for a broker confirm. Expiry is an
 	// AMBIGUOUS outcome. PUBLISH_CONFIRM_TIMEOUT_MS
 	PublishConfirmTimeout time.Duration
-	// Heartbeat is the AMQP heartbeat interval. A `heartbeat` parameter in
-	// the broker URL wins, which is also how heartbeats are turned off
-	// (heartbeat=0). AMQP_HEARTBEAT_SECONDS
+	// Heartbeat is the AMQP heartbeat interval, which bounds how long a dead
+	// peer goes unnoticed. A `heartbeat` parameter in the broker URL wins;
+	// zero, from either, accepts the interval the broker proposes.
+	// AMQP_HEARTBEAT_SECONDS
 	Heartbeat time.Duration
 	// ConnectionReadyTimeout bounds how long a publish parked on a
 	// reconnection waits before failing with ErrNotReady.
 	// CONNECTION_READY_TIMEOUT_MS
 	ConnectionReadyTimeout time.Duration
-	// MaxOutstandingConfirms bounds unconfirmed publishes per channel; further
-	// publishes wait for a slot. MAX_OUTSTANDING_CONFIRMS
+	// MaxOutstandingConfirms bounds unconfirmed publishes per channel, at most
+	// 65535; further publishes wait for a slot. MAX_OUTSTANDING_CONFIRMS
 	MaxOutstandingConfirms int
 
 	// Streaming caller buffer bounds. Crossing one fails the stream with
@@ -94,8 +95,8 @@ type Config struct {
 	// PROTOBUS_EXPOSE_INTERNAL_ERRORS
 	ExposeInternalErrors bool
 
-	// ShutdownDrainTimeout bounds how long Run waits for in-flight work to
-	// finish on shutdown. SHUTDOWN_DRAIN_TIMEOUT_MS
+	// ShutdownDrainTimeout bounds how long Bus.Shutdown (and so Run) waits
+	// for in-flight work to finish. Zero does not wait. SHUTDOWN_DRAIN_TIMEOUT_MS
 	ShutdownDrainTimeout time.Duration
 
 	Reconnect ReconnectPolicy
@@ -248,8 +249,8 @@ func (c Config) Validate() error {
 	if c.DefaultPrefetch < 1 || c.DefaultPrefetch > math.MaxUint16 {
 		bad("DefaultPrefetch must be within 1..%d, got %d", math.MaxUint16, c.DefaultPrefetch)
 	}
-	if c.MaxOutstandingConfirms < 1 {
-		bad("MaxOutstandingConfirms must be positive, got %d", c.MaxOutstandingConfirms)
+	if c.MaxOutstandingConfirms < 1 || c.MaxOutstandingConfirms > math.MaxUint16 {
+		bad("MaxOutstandingConfirms must be within 1..%d, got %d", math.MaxUint16, c.MaxOutstandingConfirms)
 	}
 	if c.StreamMaxBufferedChunks < 1 {
 		bad("StreamMaxBufferedChunks must be positive, got %d", c.StreamMaxBufferedChunks)
@@ -257,9 +258,10 @@ func (c Config) Validate() error {
 	if c.StreamMaxBufferedBytes < 1 {
 		bad("StreamMaxBufferedBytes must be positive, got %d", c.StreamMaxBufferedBytes)
 	}
-	if c.StreamMaxTotalBufferedBytes < c.StreamMaxBufferedBytes {
-		bad("StreamMaxTotalBufferedBytes (%d) must be at least StreamMaxBufferedBytes (%d)",
-			c.StreamMaxTotalBufferedBytes, c.StreamMaxBufferedBytes)
+	// A total below the per-call bound is allowed, as in the other ports:
+	// the total then binds first.
+	if c.StreamMaxTotalBufferedBytes < 1 {
+		bad("StreamMaxTotalBufferedBytes must be positive, got %d", c.StreamMaxTotalBufferedBytes)
 	}
 	if c.Reconnect.MaxRetries < 0 {
 		bad("Reconnect.MaxRetries must not be negative, got %d", c.Reconnect.MaxRetries)

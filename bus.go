@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -61,7 +60,7 @@ func Dial(ctx context.Context, url string, opts ...DialOption) (*Bus, error) {
 	}
 	log := o.log
 	if log == nil {
-		log = defaultLogger(os.Stderr)
+		log = defaultLogger(nil)
 	}
 	dial := o.dialer
 	if dial == nil {

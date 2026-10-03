@@ -1,7 +1,7 @@
 package protobus
 
 import (
-	"io"
+	"context"
 	"log/slog"
 	"net/url"
 	"os"
@@ -12,8 +12,8 @@ import (
 // Logging.
 //
 // protobus logs through log/slog. Pass your own *slog.Logger with WithLogger;
-// otherwise a text logger on stderr is used, at the level named by LOG_LEVEL
-// (debug, info, warn, error, or silent/off/none; default info).
+// otherwise slog.Default is used, filtered by LOG_LEVEL when it is set
+// (debug, info, warn, error, or silent/off/none).
 //
 // What the library logs is framework metadata only: operation, queue,
 // exchange, routing key, correlation and message ids, sizes, durations and
@@ -22,27 +22,58 @@ import (
 // process boundary. Attribute names match the TypeScript port's LogRecord so
 // logs from a mixed deployment aggregate under one schema.
 
-func levelFromEnv() (level slog.Level, silent bool) {
+// levelFromEnv reads LOG_LEVEL. set is false when it is unset or not a level
+// name, in which case the application's handler decides.
+func levelFromEnv() (level slog.Level, silent, set bool) {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
 	case "debug":
-		return slog.LevelDebug, false
+		return slog.LevelDebug, false, true
+	case "info":
+		return slog.LevelInfo, false, true
 	case "warn", "warning":
-		return slog.LevelWarn, false
+		return slog.LevelWarn, false, true
 	case "error":
-		return slog.LevelError, false
+		return slog.LevelError, false, true
 	case "silent", "off", "none":
-		return 0, true
+		return 0, true, true
 	default:
-		return slog.LevelInfo, false
+		return slog.LevelInfo, false, false
 	}
 }
 
-func defaultLogger(w io.Writer) *slog.Logger {
-	level, silent := levelFromEnv()
-	if silent {
-		return slog.New(slog.DiscardHandler)
+// defaultLogger is the logger used without WithLogger: the application's
+// handler (slog.Default's, unless given), tagged component=protobus, and
+// filtered by LOG_LEVEL when that is set, as the other ports are.
+func defaultLogger(h slog.Handler) *slog.Logger {
+	if h == nil {
+		h = slog.Default().Handler()
 	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})).With(slog.String("component", "protobus"))
+	level, silent, set := levelFromEnv()
+	switch {
+	case silent:
+		return slog.New(slog.DiscardHandler)
+	case set:
+		h = minLevel{Handler: h, min: level}
+	}
+	return slog.New(h).With(slog.String("component", "protobus"))
+}
+
+// minLevel drops records below min, whatever the wrapped handler would keep.
+type minLevel struct {
+	slog.Handler
+	min slog.Level
+}
+
+func (m minLevel) Enabled(ctx context.Context, l slog.Level) bool {
+	return l >= m.min && m.Handler.Enabled(ctx, l)
+}
+
+func (m minLevel) WithAttrs(as []slog.Attr) slog.Handler {
+	return minLevel{Handler: m.Handler.WithAttrs(as), min: m.min}
+}
+
+func (m minLevel) WithGroup(name string) slog.Handler {
+	return minLevel{Handler: m.Handler.WithGroup(name), min: m.min}
 }
 
 // redactURL returns a broker URL that is safe to log: the password is
@@ -81,14 +112,14 @@ const (
 )
 
 func attrOperation(v string) slog.Attr     { return slog.String("operation", v) }
-func attrCorrelationID(v string) slog.Attr { return slog.String("correlationId", v) }
-func attrMessageID(v string) slog.Attr     { return slog.String("messageId", v) }
+func attrCorrelationID(v string) slog.Attr { return slog.String("correlationId", clip(v)) }
+func attrMessageID(v string) slog.Attr     { return slog.String("messageId", clip(v)) }
 func attrQueue(v string) slog.Attr         { return slog.String("queue", v) }
 func attrExchange(v string) slog.Attr      { return slog.String("exchange", v) }
-func attrRoutingKey(v string) slog.Attr    { return slog.String("routingKey", v) }
-func attrMethod(v string) slog.Attr        { return slog.String("method", v) }
+func attrRoutingKey(v string) slog.Attr    { return slog.String("routingKey", clip(v)) }
+func attrMethod(v string) slog.Attr        { return slog.String("method", clip(v)) }
 func attrService(v string) slog.Attr       { return slog.String("service", v) }
-func attrMessageType(v string) slog.Attr   { return slog.String("messageType", v) }
+func attrMessageType(v string) slog.Attr   { return slog.String("messageType", clip(v)) }
 func attrSize(n int) slog.Attr             { return slog.Int("sizeBytes", n) }
 func attrErrorName(v string) slog.Attr     { return slog.String("errorName", v) }
 func attrOutcome(v string) slog.Attr       { return slog.String("outcome", v) }
@@ -104,3 +135,15 @@ func attrSafeError(err error) slog.Attr { return slog.String("error", safeErrorS
 
 // attrError is the full error, for a service's log of its own failures.
 func attrError(err error) slog.Attr { return slog.Any("error", err) }
+
+// maxLogField bounds a logged value that a publisher controls (a method name,
+// a routing key, an id), so one message cannot flood the log. slog's handlers
+// already escape control characters, so a value cannot forge a line.
+const maxLogField = 256
+
+func clip(v string) string {
+	if len(v) <= maxLogField {
+		return v
+	}
+	return v[:maxLogField] + "..."
+}

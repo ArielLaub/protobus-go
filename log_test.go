@@ -35,38 +35,55 @@ func TestLevelFromEnv(t *testing.T) {
 	}
 	for raw, want := range cases {
 		t.Setenv("LOG_LEVEL", raw)
-		got, silent := levelFromEnv()
+		got, silent, _ := levelFromEnv()
 		if silent || got != want {
 			t.Errorf("LOG_LEVEL=%q -> %v (silent %v), want %v", raw, got, silent, want)
 		}
 	}
 	for _, raw := range []string{"silent", "off", "none"} {
 		t.Setenv("LOG_LEVEL", raw)
-		if _, silent := levelFromEnv(); !silent {
+		if _, silent, _ := levelFromEnv(); !silent {
 			t.Errorf("LOG_LEVEL=%q must silence logging", raw)
 		}
 	}
 }
 
-func TestDefaultLoggerSuppressesDebugAndTagsComponent(t *testing.T) {
+func TestDefaultLoggerFollowsTheApplicationAndTagsComponent(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "")
 	var buf bytes.Buffer
-	l := defaultLogger(&buf)
+	l := defaultLogger(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	l.Debug("hidden")
 	l.Info("shown")
 	out := buf.String()
 	if strings.Contains(out, "hidden") {
-		t.Fatal("debug must be off by default: payload-level detail is opt-in")
+		t.Fatal("the application's handler level applies")
 	}
 	if !strings.Contains(out, "shown") || !strings.Contains(out, "component=protobus") {
 		t.Fatalf("unexpected output %q", out)
 	}
 }
 
+func TestLogLevelFiltersTheApplicationHandler(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "warn")
+	var buf bytes.Buffer
+	l := defaultLogger(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	l.Info("hidden")
+	l.Warn("shown")
+	if strings.Contains(buf.String(), "hidden") || !strings.Contains(buf.String(), "shown") {
+		t.Fatalf("LOG_LEVEL must filter: %q", buf.String())
+	}
+}
+
+func TestLongPublisherControlledValuesAreClipped(t *testing.T) {
+	if got := attrMethod(strings.Repeat("m", 10_000)).Value.String(); len(got) > maxLogField+3 {
+		t.Fatalf("not clipped: %d bytes", len(got))
+	}
+}
+
 func TestSilentLoggerDropsEverything(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "silent")
 	var buf bytes.Buffer
-	defaultLogger(&buf).Error("nothing")
+	defaultLogger(slog.NewTextHandler(&buf, nil)).Error("nothing")
 	if buf.Len() != 0 {
 		t.Fatalf("silent level must emit nothing, got %q", buf.String())
 	}

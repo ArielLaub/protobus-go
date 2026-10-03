@@ -27,11 +27,12 @@ import (
 // TypesProtoPath is the import path of the built-in types' .proto file.
 const TypesProtoPath = "protobus/types.proto"
 
-// TypesProto is the source of the built-in types' .proto file, for tooling
-// that compiles schemas at runtime.
-//
+// TypesProto returns the source of the built-in types' .proto file, for
+// tooling that compiles schemas at runtime.
+func TypesProto() string { return typesProto }
+
 //go:embed proto/protobus/types.proto
-var TypesProto string
+var typesProto string
 
 // BigintBytes is the width of the bigint wire format.
 const BigintBytes = 32
