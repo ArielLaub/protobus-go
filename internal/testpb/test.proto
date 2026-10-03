@@ -1,0 +1,87 @@
+// Schema used by protobus-go's own tests. Shaped like a typical shared
+// protobus schema: no go_package in the original, custom types used without
+// an explicit import (the import below is what protobus tooling injects).
+syntax = "proto3";
+
+package Test;
+
+import "protobus/types.proto";
+
+option go_package = "github.com/ArielLaub/protobus-go/v2/internal/testpb";
+
+service Calc {
+  rpc add(AddRequest) returns (AddResponse);
+  rpc fail(FailRequest) returns (AddResponse);
+  rpc slow(SlowRequest) returns (AddResponse);
+  rpc count(CountRequest) returns (stream CountChunk);
+  rpc echo(Order) returns (Order);
+  // Declared in the contract, deliberately left unimplemented by test servers.
+  rpc missing(AddRequest) returns (AddResponse);
+}
+
+// A second contract, for cross-service dispatch checks.
+service Other {
+  rpc add(AddRequest) returns (AddResponse);
+}
+
+message AddRequest {
+  int32 a = 1;
+  int32 b = 2;
+}
+
+message AddResponse {
+  int32 sum = 1;
+}
+
+message FailRequest {
+  // "handled", "unhandled", "panic", "transient" (fails until attempts > n)
+  string mode = 1;
+  string code = 2;
+  string message = 3;
+  int32 succeed_after = 4;
+}
+
+message SlowRequest {
+  int32 ms = 1;
+  bool ignore_cancel = 2;
+}
+
+message CountRequest {
+  int32 n = 1;
+  // Fail with a HandledError after this many chunks (0 = never).
+  int32 fail_at = 2;
+  int32 delay_ms = 3;
+  bool unhandled = 4;
+}
+
+message CountChunk {
+  int32 i = 1;
+}
+
+message Order {
+  string id = 1;
+  bigint amount = 2;
+  timestamp placed_at = 3;
+  int64 big = 4;
+  repeated string tags = 5;
+  map<string, int32> counts = 6;
+  map<string, bigint> balances = 7;
+  repeated bigint parts = 8;
+  Status status = 9;
+}
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_OPEN = 1;
+  STATUS_CLOSED = 2;
+}
+
+message OrderCreated {
+  string id = 1;
+  bigint amount = 2;
+}
+
+message Ping {
+  string id = 1;
+  bigint n = 2;
+}

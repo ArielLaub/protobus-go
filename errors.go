@@ -1,6 +1,7 @@
 package protobus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -160,7 +161,8 @@ func (e *PublishError) Unwrap() error { return e.Err }
 // Ambiguous reports whether the message may have been stored despite the
 // error, so that republishing could duplicate it.
 func (e *PublishError) Ambiguous() bool {
-	return errors.Is(e.Err, ErrPublishConfirmTimeout) || errors.Is(e.Err, ErrChannelClosed)
+	return errors.Is(e.Err, ErrPublishConfirmTimeout) || errors.Is(e.Err, ErrChannelClosed) ||
+		errors.Is(e.Err, context.Canceled) || errors.Is(e.Err, context.DeadlineExceeded)
 }
 
 func (e *PublishError) ErrorCode() string { return sentinelCodes[e.Err] }

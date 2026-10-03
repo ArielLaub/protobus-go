@@ -132,6 +132,17 @@ func (b *Broker) Dial(ctx context.Context, _ string, _ amqp.Config) (transport.C
 	return c, nil
 }
 
+// DialPeer opens a connection that ignores injected dial faults and is not
+// counted by Dials. Tests use it for processes standing in for other peers,
+// which keep working while the code under test is kept off the broker.
+func (b *Broker) DialPeer() transport.Conn {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	c := &conn{b: b, channels: map[*channel]struct{}{}}
+	b.conns[c] = struct{}{}
+	return c
+}
+
 // SetDialFault makes subsequent dials fail with err, until reset with nil.
 func (b *Broker) SetDialFault(err error) {
 	b.mu.Lock()
