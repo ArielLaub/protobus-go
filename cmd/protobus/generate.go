@@ -122,6 +122,7 @@ type generateOptions struct {
 	protoDir string
 	outDir   string
 	dryRun   bool
+	custom   customTypes
 }
 
 // generate compiles every schema under protoDir and writes Go message types
@@ -131,7 +132,7 @@ func generate(ctx context.Context, o generateOptions) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := protoload.Load(ctx, []string{o.protoDir})
+	res, err := protoload.Load(ctx, []string{o.protoDir}, o.custom...)
 	if err != nil {
 		return nil, err
 	}

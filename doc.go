@@ -57,8 +57,11 @@
 // it. Errors that leave the outcome unknown are *PublishError values whose
 // Ambiguous method reports true; give such calls a stable WithMessageID to
 // make them safe to repeat. A lost connection is re-established
-// automatically and every service, listener and pending call is restored
-// on it (see Config.Reconnect and WithConnectionObserver).
+// automatically (see Config.Reconnect and WithConnectionObserver): every
+// service and listener resumes on the new one, and calls made meanwhile wait
+// for it, up to Config.ConnectionReadyTimeout. A call already awaiting its
+// reply when the connection drops fails with ErrDisconnected, since its
+// request may or may not have been processed.
 //
 // # Testing
 //

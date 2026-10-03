@@ -33,6 +33,7 @@ type serviceOptions struct {
 	protoDir    string
 	outDir      string // generated code, as for generate
 	servicesDir string
+	custom      customTypes
 }
 
 // generateService writes a runnable skeleton for the first service declared
@@ -41,7 +42,7 @@ func generateService(ctx context.Context, o serviceOptions) (string, error) {
 	if err := checkServiceName(o.name); err != nil {
 		return "", err
 	}
-	res, err := protoload.Load(ctx, []string{o.protoDir})
+	res, err := protoload.Load(ctx, []string{o.protoDir}, o.custom...)
 	if err != nil {
 		return "", err
 	}

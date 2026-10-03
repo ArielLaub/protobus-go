@@ -122,6 +122,7 @@ func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	fs.StringVar(&o.protoDir, "proto", "./proto", "directory of .proto files (searched recursively)")
 	fs.StringVar(&o.outDir, "out", "./gen", "output directory, inside the current Go module")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "list the files that would be written")
+	fs.Var(&o.custom, "custom-type", "declare a custom type, name=kind (repeatable; kind is bytes, string, int64, uint64, int32, uint32 or double)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -148,6 +149,7 @@ func runGenerateService(ctx context.Context, args []string, stdout, stderr io.Wr
 	fs.StringVar(&o.protoDir, "proto", "./proto", "directory of .proto files")
 	fs.StringVar(&o.outDir, "out", "./gen", "where protobus generate writes the generated code")
 	fs.StringVar(&o.servicesDir, "services", "./services", "where to write the service")
+	fs.Var(&o.custom, "custom-type", "declare a custom type, name=kind (repeatable), as for generate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}

@@ -225,3 +225,28 @@ func TestGoName(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateWithUserCustomTypes(t *testing.T) {
+	dir := newModule(t)
+	must(t, os.WriteFile(filepath.Join(dir, "proto", "wallet.proto"), []byte(`syntax = "proto3";
+package wallet;
+message Account { money balance = 1; uuid id = 2; }
+`), 0o644))
+	inDir(t, dir)
+	if code, _, errOut := cli(t, "generate"); code == 0 || !strings.Contains(errOut, "money") {
+		t.Fatalf("an undeclared custom type is a schema error naming it: %d %s", code, errOut)
+	}
+	code, out, errOut := cli(t, "generate", "-custom-type", "money=int64", "-custom-type", "uuid=bytes")
+	if code != 0 {
+		t.Fatalf("generate failed: %s", errOut)
+	}
+	if !strings.Contains(out, "wallet.pb.go") {
+		t.Fatalf("%s", out)
+	}
+	goBuild(t, dir)
+	for _, bad := range []string{"money", "money=float128", "bigint=bytes", "my-type=bytes"} {
+		if code, _, _ := cli(t, "generate", "-dry-run", "-custom-type", bad); code == 0 {
+			t.Errorf("-custom-type %q must be refused", bad)
+		}
+	}
+}
