@@ -340,6 +340,16 @@ func TestInvokeDisconnectFailsPendingCalls(t *testing.T) {
 		errs <- NewClient(bus, "Test.Calc").Invoke(context.Background(), "add", &testpb.AddRequest{}, &testpb.AddResponse{})
 	}()
 	recvWithin(t, got, 2*time.Second)
+	// Past its confirm, so the only thing pending is the reply. (A confirm lost
+	// with the connection is ambiguous instead; see the parity tests.)
+	eventually(t, "confirmed", func() bool {
+		bus.dispatcher.mu.Lock()
+		pub := bus.dispatcher.pub
+		bus.dispatcher.mu.Unlock()
+		pub.mu.Lock()
+		defer pub.mu.Unlock()
+		return len(pub.pending) == 0
+	})
 	b.KillConnections()
 	if err := recvWithin(t, errs, 2*time.Second); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("got %v", err)
