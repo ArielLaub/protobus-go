@@ -497,7 +497,7 @@ func (s *Service) failure(ctx context.Context, method string, err error) handler
 		return s.rejection(method, "invalid service method "+lastSegment(method))
 	}
 	if h, ok := AsHandled(err); ok {
-		s.bus.log.LogAttrs(ctx, slog.LevelWarn, "handled error", attrOperation("handle"), attrService(s.name),
+		s.bus.log.LogAttrs(ctx, slog.LevelInfo, "handled error", attrOperation("handle"), attrService(s.name),
 			attrMethod(method), slog.String("code", h.Code))
 		return handlerResult{reply: s.encodeError(method, err)}
 	}
