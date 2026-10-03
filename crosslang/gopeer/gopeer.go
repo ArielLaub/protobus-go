@@ -120,7 +120,9 @@ func (c *counter) Whoami(ctx context.Context, _ *interop.Nothing) (*interop.Who,
 	return &interop.Who{Actor: ci.Actor, MessageId: ci.MessageID, RoutingKey: ci.RoutingKey, Lang: Lang}, nil
 }
 
-type wallet struct{ interop.UnimplementedWalletServer }
+type wallet struct {
+	interop.UnimplementedWalletServer
+}
 
 func (wallet) Balance(_ context.Context, in *interop.Query) (*interop.Balance, error) {
 	switch in.Account {
@@ -174,7 +176,9 @@ func Serve(ctx context.Context, bus *protobus.Bus) ([]*protobus.Service, error) 
 	if err := add(interop.RegisterFlakyServer(bus, flaky{bus: bus}, protobus.WithRetry(FlakyRetry), protobus.WithMaxConcurrent(4))); err != nil {
 		return nil, err
 	}
-	listener, err := interop.RegisterListenerServer(bus, struct{ interop.UnimplementedListenerServer }{},
+	listener, err := interop.RegisterListenerServer(bus, struct {
+		interop.UnimplementedListenerServer
+	}{},
 		protobus.AsInstance(Lang), protobus.WithRetry(protobus.RetryPolicy{}))
 	if err := add(listener, err); err != nil {
 		return nil, err
