@@ -209,12 +209,6 @@ func (b *Bus) Close() error {
 	return b.sess.close()
 }
 
-func (b *Bus) isClosed() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.closed
-}
-
 // ---- in-flight accounting ------------------------------------------------------
 
 // inflight counts work in progress and lets callers wait for it to reach zero.

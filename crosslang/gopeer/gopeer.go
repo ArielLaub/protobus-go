@@ -20,14 +20,6 @@ import (
 // Lang names this peer in events and Who replies.
 const Lang = "go"
 
-func mustBig(s string) *big.Int {
-	v, ok := new(big.Int).SetString(s, 10)
-	if !ok {
-		panic(s)
-	}
-	return v
-}
-
 // Canonical is the Balance every peer returns for an ordinary account.
 func Canonical() *interop.Balance {
 	pow := func(base, exp int64) *big.Int { return new(big.Int).Exp(big.NewInt(base), big.NewInt(exp), nil) }

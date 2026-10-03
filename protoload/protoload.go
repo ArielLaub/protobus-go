@@ -261,8 +261,7 @@ func customTypesSource(types []customType) string {
 // dynamic type otherwise.
 func registerTypes(types *protoregistry.Types, fd protoreflect.FileDescriptor) error {
 	var messages func(ms protoreflect.MessageDescriptors) error
-	var enums func(es protoreflect.EnumDescriptors) error
-	enums = func(es protoreflect.EnumDescriptors) error {
+	enums := func(es protoreflect.EnumDescriptors) error {
 		for i := range es.Len() {
 			ed := es.Get(i)
 			if gt, err := protoregistry.GlobalTypes.FindEnumByName(ed.FullName()); err == nil && gt.Descriptor() == ed {
