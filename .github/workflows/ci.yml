@@ -112,7 +112,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ArielLaub/protobus
-          ref: ba7a9bd1694159bd6c4caf749f6551fc493a482e # 2.4.0
+          ref: b36406ce7fb692145845b352f7687fe8dbcff1c9 # 2.5.0
           path: protobus
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

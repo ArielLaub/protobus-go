@@ -31,11 +31,10 @@ setLevel(process.env.PROTOBUS_TEST_LOG ? LogLevel.Debug : LogLevel.Error);
 
 const PROTO = fs.readFileSync(path.join(PROTO_DIR, 'interop.proto')).toString();
 
-// TypeScript protobus decodes an enum to its NAME but encodes through
-// protobufjs's create(), which does not convert names: a name is written as 0.
-// So values sent from here carry the enum NUMBER, and decoded values are
-// expected to carry the name. (A TS-side bug: https://github.com/ArielLaub/protobus/issues/40)
-function canonical(forSending) {
+// Enums are given by NAME, as decoding returns them. Before TypeScript
+// protobus 2.5.0 a name was encoded as 0 (protobus#40), which is why this
+// peer once sent numbers.
+function canonical() {
     return {
         amount: 10n ** 30n,
         as_of: new Date(Date.UTC(2020, 0, 1)),
@@ -44,7 +43,7 @@ function canonical(forSending) {
         counts: { x: 1, y: 2 },
         balances: { k: 2n ** 200n },
         parts: [1n, 2n, 3n],
-        kind: forSending ? 2 : 'KIND_FUTURE',
+        kind: 'KIND_FUTURE',
         inner: { name: 'root', value: 7n, children: [{ name: 'leaf', value: 8n, children: [] }] },
         ubig: '18446744073709551615',
         blob: Buffer.from([0, 1, 255]),
@@ -59,7 +58,6 @@ function canonical(forSending) {
 // ---- server ------------------------------------------------------------------
 
 const produced = { yielded: 0, stopped_early: false, finished: false };
-const KIND = { KIND_UNKNOWN: 0, KIND_SPOT: 1, KIND_FUTURE: 2 };
 
 function service(name, methods, options) {
     return class extends MessageService {
@@ -105,11 +103,11 @@ async function serve() {
         async balance(req) {
             if (req.account === 'boom') throw new HandledError('no such account', 'NOT_FOUND');
             if (req.account === 'crash') throw new Error('kaboom');
-            return canonical(true);
+            return canonical();
         },
-        // The decoded request carries the enum as a name; re-encode it as the
-        // number TypeScript can actually send.
-        async echo(req) { return { ...req, kind: KIND[req.kind] ?? req.kind }; },
+        // Returned exactly as decoded: re-encoding a decoded message must not
+        // change it, enums included.
+        async echo(req) { return req; },
     }, { retry: { maxRetries: 0 } });
     const Flaky = service('interop.Flaky', {
         async fail(_req, _actor, _id, context) {
@@ -219,7 +217,7 @@ async function client() {
         assert(p.stopped_early === true && p.finished === false && p.yielded < 500, `produced ${JSON.stringify(p)}`);
     });
     await check('custom types, defaults and maps', async () => eq(await wallet.balance({ account: 'acc' }), canonical(), 'balance'));
-    await check('echo round trip', async () => eq(await wallet.echo(canonical(true)), canonical(), 'echo'));
+    await check('echo round trip', async () => eq(await wallet.echo(canonical()), canonical(), 'echo'));
     await check('handled error', async () => {
         await expectError(wallet.balance({ account: 'boom' }), (err) => {
             eq(err.code, 'NOT_FOUND', 'code'); eq(err.message, 'no such account', 'message');

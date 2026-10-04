@@ -3,7 +3,7 @@
 protobus-go v2 is a rewrite, not an upgrade. v1 (1.4, on the `main` branch)
 was a Go library that spoke its own dialect of protobus: JSON envelopes,
 `map[string]interface{}` payloads, its own exchange names. v2 is a
-wire-compatible port of TypeScript protobus 2.4 and protobus-py 2.0, with
+wire-compatible port of TypeScript protobus 2.5 and protobus-py 2.0, with
 generated, typed Go code. Expect to rewrite the code that touches protobus;
 the concepts carry over, the API does not.
 
