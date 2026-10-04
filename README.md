@@ -461,5 +461,4 @@ how to run it are described in [Testing](docs/testing.md).
 
 ## License
 
-<!-- TODO: the LICENSE file has not been added yet; confirm the license before release. -->
 MIT — see [LICENSE](LICENSE).
