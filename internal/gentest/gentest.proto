@@ -1,0 +1,64 @@
+// Schema for the generated-code tests: the bindings in this package are
+// produced by protoc-gen-go-protobus and checked against the engine and
+// against the generator's own output.
+syntax = "proto3";
+
+package GenTest;
+
+import "protobus/types.proto";
+
+option go_package = "github.com/ArielLaub/protobus-go/v2/internal/gentest";
+
+// Calc adds and counts.
+service Calc {
+  // add returns a + b.
+  rpc add(AddRequest) returns (AddResponse);
+  rpc count(CountRequest) returns (stream CountChunk);
+  // Takes and returns a type from another Go package.
+  rpc double(bigint) returns (bigint);
+  rpc unimplemented(AddRequest) returns (AddResponse);
+  rpc fail(FailRequest) returns (AddResponse);
+  rpc slow(SlowRequest) returns (AddResponse);
+}
+
+// Streams only, to exercise the import set of a streaming-only service.
+service Ticker {
+  option deprecated = true;
+  rpc tick(CountRequest) returns (stream CountChunk);
+}
+
+message AddRequest {
+  int32 a = 1;
+  int32 b = 2;
+}
+
+message AddResponse {
+  int32 sum = 1;
+}
+
+message CountRequest {
+  int32 n = 1;
+  int32 delay_ms = 2;
+}
+
+message FailRequest {
+  // "handled", "unhandled" or "transient" (fails until succeed_after attempts)
+  string mode = 1;
+  string code = 2;
+  string message = 3;
+  int32 succeed_after = 4;
+}
+
+message SlowRequest {
+  int32 ms = 1;
+  string tag = 2;
+}
+
+message Ping {
+  string id = 1;
+  bigint n = 2;
+}
+
+message CountChunk {
+  int32 i = 1;
+}

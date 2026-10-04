@@ -1,63 +1,42 @@
-# Protobus Go Documentation
+# protobus-go documentation
 
-Welcome to the protobus-go documentation. This guide covers everything you need to build robust microservices with RabbitMQ and Protocol Buffers in Go.
+protobus-go runs request/response calls, server streams and published events
+over RabbitMQ, with Protocol Buffers on the wire. It is wire-compatible with
+the TypeScript and Python ports. New here? Start with
+[Getting Started](getting-started.md).
 
-## Quick Navigation
+## Guides
 
-### Getting Started
-- [Getting Started](getting-started.md) - Your first protobus-go service
-- [Architecture](architecture.md) - System design overview
-- [Configuration](configuration.md) - Environment and connection settings
+| Page | What it covers |
+|---|---|
+| [Getting Started](getting-started.md) | from an empty directory to a service, a client, an event and a unit test |
+| [Services](services.md) | implementing and registering services; concurrency, retries, early ack, priority, instances, interceptors, graceful shutdown |
+| [Clients](clients.md) | calling services; call options, timeouts, message ids, fire-and-forget, the dynamic client |
+| [Events](events.md) | publishing and subscribing; topics and wildcards, listeners, event retries and the event DLQ |
+| [Streaming](streaming.md) | `returns (stream T)` methods; `ServerStream`, ranging over `iter.Seq2`, cancellation, idle timeouts, backpressure |
 
-### API Reference
-- [Context](api/context.md) - Connection and factory management
-- [BaseService](api/base-service.md) - Foundation for all services
-- [RunnableService](api/runnable-service.md) - Service with lifecycle management
-- [ServiceProxy](api/service-proxy.md) - RPC client for calling services
-- [ServiceCluster](api/service-cluster.md) - Managing multiple service instances
+## Reference
 
-### Advanced Topics
-- [Streaming RPC](advanced/streaming.md) - Server-streaming responses (`HandleStream` + `OpenStream`)
-- [Error Handling](advanced/error-handling.md) - HandledError and retries
-- [Custom Types](advanced/custom-types.md) - BigInt, Timestamp, and custom serialization
+| Page | What it covers |
+|---|---|
+| [Configuration](configuration.md) | every `Config` field, its environment variable and default; dial options; reconnection |
+| [Errors](errors.md) | `HandledError` and `RemoteError`, retries and the DLQ, error codes, sentinel errors, ambiguous publishes |
+| [Code generation](codegen.md) | the `protobus` CLI, `protoc-gen-go-protobus`, the generated API, custom types, `protoload` |
+| [Testing](testing.md) | the `protobustest` in-memory broker, integration and cross-language suites |
 
-### CLI Tools
-- [CLI Documentation](cli.md) - Code generation and scaffolding
+## Operations
 
-## Core Concepts
+| Page | What it covers |
+|---|---|
+| [Security](security.md) | what `actor` does and does not prove, exposing internal errors, broker credentials |
+| [Migration](migration.md) | upgrading from protobus-go v1 to v2 |
+| [Compatibility](compatibility.md) | interoperating with TypeScript and Python: type mapping, topology, deliberate differences |
 
-### RabbitMQ-Native Architecture
+## Elsewhere
 
-Unlike transport-agnostic frameworks, protobus-go leverages RabbitMQ's native capabilities:
-
-| Feature | Traditional Frameworks | Protobus |
-|---------|----------------------|----------|
-| Load balancing | App-level round-robin | Broker-level competing consumers |
-| Message routing | App-level pattern matching | Native topic exchanges |
-| Reliability | Custom retry logic | Native acknowledgments |
-| Dead letters | Manual implementation | Native DLX support |
-
-### Message Flow
-
-```
-Client                    RabbitMQ                   Service
-  │                          │                          │
-  │  Call("Add", {a:1,b:2}) │                          │
-  │─────────────────────────>│                          │
-  │                          │  REQUEST.Service.Add     │
-  │                          │─────────────────────────>│
-  │                          │                          │ handler()
-  │                          │         Response         │
-  │                          │<─────────────────────────│
-  │       {result: 3}        │                          │
-  │<─────────────────────────│                          │
-```
-
-### Cross-Language Compatibility
-
-Protobus services are fully interoperable across languages:
-- **Go**: protobus-go (this library)
-- **TypeScript/Node.js**: [protobus](https://github.com/ArielLaub/protobus)
-- **Python**: [protobus-py](https://github.com/ArielLaub/protobus-py)
-
-Services in different languages communicate seamlessly via RabbitMQ.
+- [README](../README.md): the overview and quick start.
+- [CHANGELOG](../CHANGELOG.md): what changed in each release.
+- [examples/](../examples): `calculator` (RPC and events), `tokenstream`
+  (streaming and cancellation), `combat` (service instances and events).
+- API reference: [pkg.go.dev](https://pkg.go.dev/github.com/ArielLaub/protobus-go/v2),
+  or `go doc -all github.com/ArielLaub/protobus-go/v2` locally.

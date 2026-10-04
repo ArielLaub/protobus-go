@@ -2,134 +2,147 @@ package protobus
 
 import (
 	"context"
-	"io"
+	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
-	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/ArielLaub/protobus-go/v2/internal/wire"
 )
 
-// streamSinkKey is the context.Context key under which the listener stashes
-// the per-call reply destination and publisher for a streaming handler.
-// Unexported — only the framework reads/writes this.
-type streamSinkKey struct{}
+// serverStream publishes the frames of one server-streaming reply.
+//
+// Frames go to the callbacks exchange under the request's replyTo, each with
+// x-protobus-seq (from 0) and x-protobus-final. The last frame carries
+// final=true, which needs a look-ahead of one: every frame is held until the
+// next arrives or the handler returns. An empty stream sends one empty final
+// frame; a failing stream ends with its error as the final frame.
+type serverStream struct {
+	ctx    context.Context
+	c      *consumer
+	pub    *pubChannel
+	d      *amqp.Delivery
+	method string
 
-// streamSink carries the per-delivery reply context a streaming handler
-// needs to publish chunks. ReplyTo is the AMQP routing key for the
-// per-client callback queue; Publish is a one-call publisher that handles
-// header assembly and the underlying AMQP write.
-type streamSink struct {
-	ReplyTo string
-	Publish func(replyTo, correlationID string, body []byte, seq uint32, final bool)
+	mu      sync.Mutex
+	seq     int64
+	pending []byte
+	err     error
+	done    bool
 }
 
-// withStreamSink stashes the sink on the context. Internal — used by the
-// listener before dispatching to a streaming handler.
-func withStreamSink(ctx context.Context, sink *streamSink) context.Context {
-	return context.WithValue(ctx, streamSinkKey{}, sink)
-}
+var ErrStreamFinished = errors.New("protobus: Send after the stream handler returned")
 
-// streamSinkFromContext pulls the sink off the context, returning nil if
-// none was set (i.e. this isn't a streaming dispatch).
-func streamSinkFromContext(ctx context.Context) *streamSink {
-	if v, ok := ctx.Value(streamSinkKey{}).(*streamSink); ok {
-		return v
+func (s *serverStream) Context() context.Context { return s.ctx }
+
+func (s *serverStream) SendMsg(m proto.Message) error {
+	if err := s.ctx.Err(); err != nil {
+		return fmt.Errorf("protobus: stream ended: %w", context.Cause(s.ctx))
 	}
-	return nil
-}
-
-// StreamingHandler is the signature for server-streaming RPC method handlers.
-//
-// Unlike a unary MethodHandler which returns a single result, a streaming
-// handler yields zero or more chunks through `send`, then returns. Returning
-// without an error closes the stream cleanly; returning an error closes it
-// with that error as the terminal payload.
-//
-// The framework guarantees that calls to `send` are serialized — you can
-// invoke it from the handler goroutine without any locking.
-//
-// See docs/advanced/streaming.md for the full contract.
-type StreamingHandler func(
-	ctx context.Context,
-	data map[string]interface{},
-	actor string,
-	correlationID string,
-	send func(chunk map[string]interface{}) error,
-) error
-
-// ClientStream represents an active server-streaming RPC from the client's
-// perspective. Iterate it with Recv() until it returns io.EOF; always call
-// Close() (typically via defer) to release the dispatcher slot — even if
-// Recv() returned io.EOF, an early Close() is a no-op.
-//
-// ClientStream is safe to use from a single goroutine. Concurrent Recv()
-// from multiple goroutines is not supported.
-//
-// See docs/advanced/streaming.md for the full lifecycle.
-type ClientStream struct {
-	mu            sync.Mutex
-	chunks        chan *ResponseContainer
-	idleTimeout   time.Duration
-	correlationID string
-	closed        bool
-	terminalErr   error // set on terminal chunk if it carries an error
-	cleanup       func()
-}
-
-// Recv blocks until the next chunk arrives, the idle timeout fires, the
-// stream ends naturally (io.EOF), or the stream is closed.
-//
-// On normal termination (final chunk with no error), Recv returns the final
-// chunk on its second-to-last call and io.EOF on the next. On mid-stream
-// error, the terminal chunk's error is returned in place of io.EOF.
-func (s *ClientStream) Recv() (map[string]interface{}, error) {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil, ErrStreamClosed
+	data, err := marshal(m)
+	if err != nil {
+		return fmt.Errorf("protobus: encoding a stream response of %s: %w", s.method, err)
 	}
-	s.mu.Unlock()
+	body, _ := wire.AppendResponse(nil, wire.Response{Result: &wire.Result{Method: s.method, Data: data}})
 
-	select {
-	case resp, ok := <-s.chunks:
-		if !ok {
-			// Channel closed by handleReplies on terminal chunk.
-			if s.terminalErr != nil {
-				return nil, s.terminalErr
-			}
-			return nil, io.EOF
-		}
-		if resp.Error != nil {
-			// Terminal error chunk — surface and end stream.
-			s.terminalErr = NewHandledError(resp.Error.Message, resp.Error.Code)
-			return nil, s.terminalErr
-		}
-		return resp.Result, nil
-
-	case <-time.After(s.idleTimeout):
-		return nil, ErrStreamIdleTimeout
-	}
-}
-
-// Close releases the dispatcher slot for this stream. Idempotent. Safe to
-// call from defer even if Recv already returned io.EOF.
-//
-// In v1, Close does NOT signal the server to stop generating — the server
-// keeps publishing chunks, but they're dropped at the dispatcher. Server
-// cancellation is on the roadmap.
-func (s *ClientStream) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return nil
+	switch {
+	case s.done:
+		return ErrStreamFinished
+	case s.err != nil:
+		return s.err
 	}
-	s.closed = true
-	if s.cleanup != nil {
-		s.cleanup()
+	if s.pending != nil {
+		if err := s.publish(s.pending, false); err != nil {
+			s.err = err
+			return err
+		}
 	}
+	s.pending = body
 	return nil
 }
 
-// CorrelationID returns the AMQP correlation_id used for this stream.
-// Useful for diagnostics and matching against server-side logs.
-func (s *ClientStream) CorrelationID() string {
-	return s.correlationID
+// publish sends one frame. Caller holds s.mu.
+func (s *serverStream) publish(body []byte, final bool) error {
+	if s.d.ReplyTo == "" {
+		s.seq++
+		return nil // nobody asked for the frames
+	}
+	// A caller that has gone is not listening: stop before publishing more.
+	if errors.Is(context.Cause(s.ctx), ErrCancelled) {
+		return fmt.Errorf("protobus: stream ended: %w", ErrCancelled)
+	}
+	err := s.c.publishReply(s.pub, s.d, body, amqp.Table{
+		headerFinal: final,
+		headerSeq:   intHeader(s.seq),
+	})
+	if err == nil {
+		s.seq++
+	}
+	return err
+}
+
+// finish publishes the final frame after the handler returned. It reports a
+// publish failure, which fails the attempt.
+func (s *serverStream) finish(handlerErr error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.done = true
+	if errors.Is(context.Cause(s.ctx), ErrCancelled) {
+		return nil // cancelled: no final frame
+	}
+	if s.err != nil {
+		return s.err
+	}
+	if handlerErr == nil {
+		body := s.pending
+		if body == nil {
+			body = []byte{}
+		}
+		return s.publish(body, true)
+	}
+	if s.pending != nil {
+		if err := s.publish(s.pending, false); err != nil {
+			return err
+		}
+	}
+	return s.publish(s.c.serviceErrorBody(s, handlerErr), true)
+}
+
+func (c *consumer) serviceErrorBody(s *serverStream, err error) []byte {
+	ce := sanitizeForCaller(err, c.bus.cfg.ExposeInternalErrors)
+	body, _ := wire.AppendResponse(nil, wire.Response{Error: &wire.Error{Method: s.method, Message: ce.Message, Code: ce.Code}})
+	return body
+}
+
+// serveStream runs a streaming handler. A mid-stream error becomes the
+// stream's final frame and is not retried; a stream cannot be replayed
+// without the caller seeing it twice. A failure to publish a frame, though,
+// fails the attempt like any other infrastructure error.
+func (s *Service) serveStream(ctx context.Context, d *amqp.Delivery, ctl *deliveryControl, method string, st StreamDesc, dec DecodeFunc) handlerResult {
+	// Only a stream can be cancelled by its caller.
+	ctl.cancellable()
+	ss := &serverStream{ctx: ctx, c: s.requests, pub: ctl.pub, d: d, method: method}
+	err := st.Handler(s.impl, ctx, dec, ss, s.streamIC)
+
+	var pe *payloadError
+	switch {
+	case errors.As(err, &pe):
+		err = newProtocolError("payload did not decode as the request type of " + method)
+	case errors.Is(err, ErrUnimplemented):
+		err = newProtocolError("invalid service method " + lastSegment(method))
+	case err != nil && !errors.Is(context.Cause(ctx), ErrCancelled):
+		if _, handled := AsHandled(err); !handled {
+			s.bus.log.LogAttrs(ctx, slog.LevelError, "stream handler failed", attrOperation("stream"),
+				attrService(s.name), attrMethod(method), attrCorrelationID(d.CorrelationId), attrError(err))
+		}
+	}
+	if perr := ss.finish(err); perr != nil {
+		return handlerResult{err: perr}
+	}
+	return handlerResult{}
 }

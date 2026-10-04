@@ -1,0 +1,230 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"text/template"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"github.com/ArielLaub/protobus-go/v2/protoload"
+)
+
+var safeName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// checkServiceName refuses anything that could escape the output
+// directories: separators, dot segments, whitespace, NUL.
+func checkServiceName(name string) error {
+	if name == "" || len(name) > 100 || name == "." || name == ".." || !safeName.MatchString(name) {
+		return fmt.Errorf("invalid service name %q: use letters, digits, '-' and '_' only (at most 100)", name)
+	}
+	return nil
+}
+
+type serviceOptions struct {
+	name        string
+	protoDir    string
+	outDir      string // generated code, as for generate
+	servicesDir string
+	custom      customTypes
+}
+
+// generateService writes a runnable skeleton for the first service declared
+// in <protoDir>/<name>.proto. It never overwrites an existing file.
+func generateService(ctx context.Context, o serviceOptions) (string, error) {
+	if err := checkServiceName(o.name); err != nil {
+		return "", err
+	}
+	res, err := protoload.Load(ctx, []string{o.protoDir}, o.custom...)
+	if err != nil {
+		return "", err
+	}
+	file, err := res.Files.FindFileByPath(o.name + ".proto")
+	if err != nil {
+		return "", fmt.Errorf("no %s.proto in %s", o.name, o.protoDir)
+	}
+	if file.Services().Len() == 0 {
+		return "", fmt.Errorf("%s.proto declares no service", o.name)
+	}
+	svc := file.Services().Get(0)
+
+	mod, err := findModule(o.servicesDir)
+	if err != nil {
+		return "", err
+	}
+	importPath, pkgName, err := goPackageFor(mod, o.outDir, file)
+	if err != nil {
+		return "", err
+	}
+	if gp := goPackageOption(file); gp != "" {
+		importPath, pkgName = gp, ""
+		if i := strings.LastIndexByte(gp, ';'); i >= 0 {
+			importPath, pkgName = gp[:i], gp[i+1:]
+		}
+	}
+
+	dir := filepath.Join(o.servicesDir, strings.ToLower(o.name))
+	target := filepath.Join(dir, "main.go")
+	absDir, _ := absPath(o.servicesDir)
+	absTarget, _ := absPath(target)
+	if !strings.HasPrefix(absTarget, absDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing to write outside %s", o.servicesDir)
+	}
+	if _, err := os.Stat(target); err == nil {
+		return "", fmt.Errorf("%s already exists; not overwriting it", target)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	data := skeletonData{
+		Proto: file.Path(), Service: string(svc.FullName()), GoService: goName(string(svc.Name())),
+		Import: importPath, Pkg: pkgName,
+	}
+	if data.Pkg == "" {
+		data.Pkg = "pb"
+	}
+	for i := range svc.Methods().Len() {
+		m := svc.Methods().Get(i)
+		data.Methods = append(data.Methods, skeletonMethod{
+			Name: goName(string(m.Name())), Proto: string(m.Name()),
+			In: goName(string(m.Input().Name())), Out: goName(string(m.Output().Name())),
+			InPkg: pkgOf(m.Input(), file), OutPkg: pkgOf(m.Output(), file),
+			Stream: m.IsStreamingServer(),
+		})
+	}
+	var buf bytes.Buffer
+	if err := skeleton.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	src, err := format.Source(buf.Bytes())
+	if err != nil {
+		return "", fmt.Errorf("formatting the skeleton: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	// O_EXCL: never clobber a file that appeared since the check above.
+	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.Write(src); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func goPackageOption(fd protoreflect.FileDescriptor) string {
+	type goPkg interface{ GetGoPackage() string }
+	if o, ok := fd.Options().(goPkg); ok {
+		return o.GetGoPackage()
+	}
+	return ""
+}
+
+// pkgOf qualifies a message from another file; the skeleton only handles the
+// common case of the service's own package and the built-in types.
+func pkgOf(md protoreflect.MessageDescriptor, file protoreflect.FileDescriptor) string {
+	switch {
+	case md.ParentFile().Path() == file.Path():
+		return ""
+	case md.FullName() == "bigint" || md.FullName() == "timestamp":
+		return "pbtypes."
+	}
+	return ""
+}
+
+// goName mirrors protoc-gen-go's CamelCase for identifiers.
+func goName(s string) string {
+	var b strings.Builder
+	upper := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '_' && i+1 < len(s) && s[i+1] >= 'a' && s[i+1] <= 'z':
+			upper = true
+		case c == '.':
+			upper = true
+		case upper && c >= 'a' && c <= 'z':
+			b.WriteByte(c - 'a' + 'A')
+			upper = false
+		default:
+			b.WriteByte(c)
+			upper = c >= '0' && c <= '9'
+		}
+	}
+	return b.String()
+}
+
+type skeletonMethod struct {
+	Name, Proto, In, Out, InPkg, OutPkg string
+	Stream                              bool
+}
+
+type skeletonData struct {
+	Proto, Service, GoService, Import, Pkg string
+	Methods                                []skeletonMethod
+}
+
+var skeleton = template.Must(template.New("service").Parse(`// Command {{.GoService}} serves {{.Service}} ({{.Proto}}).
+//
+// Generated by protobus generate:service as a starting point; it is yours to
+// edit. Configure it with AMQP_URL and the protobus environment variables.
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	protobus "github.com/ArielLaub/protobus-go/v2"
+{{- range .Methods}}{{if or (eq .InPkg "pbtypes.") (eq .OutPkg "pbtypes.")}}
+	"github.com/ArielLaub/protobus-go/v2/pbtypes"{{break}}{{end}}{{end}}
+
+	{{.Pkg}} "{{.Import}}"
+)
+
+type server struct {
+	{{.Pkg}}.Unimplemented{{.GoService}}Server
+}
+{{range .Methods}}
+{{- if .Stream}}
+// {{.Name}} serves {{$.Service}}.{{.Proto}}: Send each response, return nil to end
+// the stream.
+func (s *server) {{.Name}}(ctx context.Context, in *{{if .InPkg}}{{.InPkg}}{{else}}{{$.Pkg}}.{{end}}{{.In}}, stream protobus.ServerStream[*{{if .OutPkg}}{{.OutPkg}}{{else}}{{$.Pkg}}.{{end}}{{.Out}}]) error {
+	return protobus.NewHandledError("NOT_IMPLEMENTED", "{{.Proto}} is not implemented yet")
+}
+{{else}}
+// {{.Name}} serves {{$.Service}}.{{.Proto}}. Return a protobus.HandledError for an
+// expected failure the caller should see; any other error is retried.
+func (s *server) {{.Name}}(ctx context.Context, in *{{if .InPkg}}{{.InPkg}}{{else}}{{$.Pkg}}.{{end}}{{.In}}) (*{{if .OutPkg}}{{.OutPkg}}{{else}}{{$.Pkg}}.{{end}}{{.Out}}, error) {
+	return nil, protobus.NewHandledError("NOT_IMPLEMENTED", "{{.Proto}} is not implemented yet")
+}
+{{end}}{{end}}
+func main() {
+	url := os.Getenv("AMQP_URL")
+	if url == "" {
+		url = "amqp://guest:guest@localhost:5672/"
+	}
+	ctx := context.Background()
+	bus, err := protobus.Dial(ctx, url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	svc, err := {{.Pkg}}.Register{{.GoService}}Server(bus, &server{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := protobus.Run(ctx, bus, svc); err != nil {
+		log.Fatal(err)
+	}
+}
+`))

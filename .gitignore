@@ -1,0 +1,22 @@
+# Build and test output
+/bin/
+*.test
+*.out
+coverage.*
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Cross-language peers' installed dependencies
+node_modules/
+__pycache__/
+.venv/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key

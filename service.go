@@ -2,378 +2,532 @@ package protobus
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"github.com/ArielLaub/protobus-go/v2/internal/transport"
+	"github.com/ArielLaub/protobus-go/v2/internal/wire"
 )
 
-// Service is the interface that all services must implement.
-type Service interface {
-	ServiceName() string
-	ProtoFileName() string
+// RetryPolicy governs how a service retries requests whose handler failed
+// with an unhandled error. A failed attempt is parked on <service>.Retry for
+// Delay, then redelivered; after MaxRetries retries it goes to
+// <service>.DLQ, and only then is the caller told it failed.
+type RetryPolicy struct {
+	// MaxRetries is the number of retries after the first attempt. 0
+	// disables retrying and the dead-letter queue: a failure is answered and
+	// the request dropped.
+	MaxRetries int
+	// Delay is the retry queue's message TTL. RabbitMQ fixes it when the
+	// queue is first declared; changing it later fails startup with
+	// ErrRetryQueueMismatch until the queue is deleted.
+	Delay time.Duration
+	// MessageTTL, when set, expires requests waiting in the service queue.
+	MessageTTL time.Duration
 }
 
-// MethodHandler is the signature for RPC method handlers.
-// Parameters: ctx, data map, actor string, correlationID string
-// Returns: result map, error
-type MethodHandler func(ctx context.Context, data map[string]interface{}, actor, correlationID string) (map[string]interface{}, error)
+// DefaultRetryPolicy is the retry policy of the other ports: three retries,
+// five seconds apart.
+func DefaultRetryPolicy() RetryPolicy { return RetryPolicy{MaxRetries: 3, Delay: 5 * time.Second} }
 
-// ServiceOptions configures a service.
-type ServiceOptions struct {
-	MaxConcurrent int
-	RetryOptions  *RetryOptions
+// EventRetryPolicy governs retries of event handlers (see WithEventRetry).
+type EventRetryPolicy struct {
+	// MaxRetries is the number of retries after the first attempt; 0 (the
+	// default) disables event retries.
+	MaxRetries int
+	// Delay is the event retry queue's message TTL; see RetryPolicy.Delay.
+	Delay time.Duration
 }
 
-// BaseService provides common service functionality.
-type BaseService struct {
-	mu            sync.RWMutex
-	ctx           *Context
-	listener      *BaseListener
-	eventListener *BaseListener
-	handlers      map[string]MethodHandler
-	// streamHandlers registers server-streaming methods. A method may live
-	// in either `handlers` (unary) or `streamHandlers` (streaming) — never
-	// both. The framework dispatches onMessage based on which map contains
-	// the requested method name. See docs/advanced/streaming.md.
-	streamHandlers map[string]StreamingHandler
-	serviceName    string
-	protoFileName  string
-	options        *ServiceOptions
-	initialized    bool
+type serviceOptions struct {
+	instance           string
+	maxConcurrent      int
+	retry              RetryPolicy
+	earlyAck           bool
+	processingTimeout  time.Duration
+	maxPriority        *uint8
+	eventRetry         EventRetryPolicy
+	eventConcurrency   int
+	unaryInterceptors  []UnaryServerInterceptor
+	streamInterceptors []StreamServerInterceptor
 }
 
-// NewBaseService creates a new BaseService.
-func NewBaseService(ctx *Context, serviceName, protoFileName string, options *ServiceOptions) *BaseService {
-	if options == nil {
-		options = &ServiceOptions{}
-	}
+func serviceOpt(f func(*serviceOptions)) ServiceOption { return serviceOption{option{service: f}} }
 
-	lateAck := options.MaxConcurrent > 0
-
-	return &BaseService{
-		ctx:            ctx,
-		serviceName:    serviceName,
-		protoFileName:  protoFileName,
-		options:        options,
-		handlers:       make(map[string]MethodHandler),
-		streamHandlers: make(map[string]StreamingHandler),
-		listener:       NewBaseListener(ctx.Connection(), lateAck, options.MaxConcurrent, options.RetryOptions),
-		eventListener:  NewBaseListener(ctx.Connection(), false, 0, nil),
-	}
+// WithMaxConcurrent sets how many requests the service handles at once: the
+// consumer's prefetch, each delivery on its own goroutine. Default 1.
+func WithMaxConcurrent(n int) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.maxConcurrent = n })
 }
 
-// ServiceName returns the service name.
-func (s *BaseService) ServiceName() string {
-	return s.serviceName
+// WithRetry replaces DefaultRetryPolicy. RetryPolicy{} disables retries and
+// the dead-letter queue.
+func WithRetry(p RetryPolicy) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.retry = p })
 }
 
-// ProtoFileName returns the proto file name.
-func (s *BaseService) ProtoFileName() string {
-	return s.protoFileName
+// WithEarlyAck acknowledges each request on arrival instead of after its
+// reply: at-most-once delivery, with no retries and no dead-letter queue. A
+// failure is still reported to the caller. A delivery is acknowledged when a
+// handler slot frees up, so WithMaxConcurrent (the prefetch) still bounds the
+// work in process: up to n handlers running and n more deliveries waiting.
+func WithEarlyAck() ServiceOption { return serviceOpt(func(o *serviceOptions) { o.earlyAck = true }) }
+
+// WithProcessingTimeout replaces Config.ProcessingTimeout for this service's
+// unary methods. Streaming methods are bounded by their caller's idle timeout
+// and cancellation instead.
+func WithProcessingTimeout(d time.Duration) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.processingTimeout = d })
 }
 
-// Handle registers a unary method handler.
-func (s *BaseService) Handle(method string, handler MethodHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.handlers[strings.ToLower(method)] = handler
-}
-
-// HandleStream registers a server-streaming method handler. The handler
-// produces zero or more response chunks via the `send` callback, then
-// returns. Returning an error terminates the stream with that error as
-// the terminal chunk's payload.
+// WithMaxPriority declares the service queue as a RabbitMQ priority queue with
+// x-max-priority n (1..255; RecommendedMaxPriority is the sensible choice).
+// It cannot be combined with WithEarlyAck, as in the TypeScript port: early
+// ack takes requests off the queue as soon as a slot frees, before a
+// higher-priority arrival can overtake them.
 //
-// See docs/advanced/streaming.md for the full contract and examples.
-func (s *BaseService) HandleStream(method string, handler StreamingHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.streamHandlers[strings.ToLower(method)] = handler
+// RabbitMQ fixes a queue's arguments at declaration, so adding or changing
+// this on an existing queue fails with PRECONDITION_FAILED until an operator
+// deletes the queue.
+func WithMaxPriority(n uint8) ServiceOption {
+	return serviceOpt(func(o *serviceOptions) { o.maxPriority = &n })
 }
 
-// RegisterHandlers uses reflection to auto-discover and register handlers.
-// It looks for methods with signature:
-// func(ctx context.Context, data map[string]interface{}, actor, correlationID string) (map[string]interface{}, error)
-func (s *BaseService) RegisterHandlers(service interface{}) {
-	val := reflect.ValueOf(service)
-	typ := val.Type()
+// ErrUnknownService reports a ServiceDesc whose service is not in the file
+// registry, so there is no contract to validate requests against.
+var ErrUnknownService = errors.New("protobus: unknown service")
 
-	for i := 0; i < typ.NumMethod(); i++ {
-		method := typ.Method(i)
+// Service serves one protobus service on a Bus.
+type Service struct {
+	bus      *Bus
+	desc     *ServiceDesc
+	impl     any
+	contract protoreflect.ServiceDescriptor
+	name     string // runtime name: the queue, and the REQUEST.<name>.* binding
+	opts     serviceOptions
 
-		// Check signature
-		if !isValidHandler(method.Type) {
-			continue
-		}
+	unary    map[string]MethodDesc
+	streams  map[string]StreamDesc
+	unaryIC  UnaryServerInterceptor
+	streamIC StreamServerInterceptor
 
-		// Get method name (lowercase first char for consistency)
-		name := method.Name
-		if len(name) > 0 {
-			name = strings.ToLower(name[:1]) + name[1:]
-		}
+	requests *consumer
 
-		// Create wrapper
-		methodVal := val.Method(i)
-		handler := func(ctx context.Context, data map[string]interface{}, actor, correlationID string) (map[string]interface{}, error) {
-			args := []reflect.Value{
-				reflect.ValueOf(ctx),
-				reflect.ValueOf(data),
-				reflect.ValueOf(actor),
-				reflect.ValueOf(correlationID),
-			}
-			results := methodVal.Call(args)
-
-			var result map[string]interface{}
-			var err error
-
-			if !results[0].IsNil() {
-				result = results[0].Interface().(map[string]interface{})
-			}
-			if !results[1].IsNil() {
-				err = results[1].Interface().(error)
-			}
-
-			return result, err
-		}
-
-		s.Handle(name, handler)
-		logDebug("Registered handler: %s.%s", s.serviceName, name)
-	}
+	mu      sync.Mutex
+	events  *EventListener
+	started bool
 }
 
-func isValidHandler(t reflect.Type) bool {
-	// Must have 5 inputs: receiver, ctx, data, actor, correlationID
-	if t.NumIn() != 5 {
-		return false
+// Register prepares a service implementation for serving. Nothing touches the
+// broker until Start.
+//
+// Generated code calls it from Register<Service>Server; it can be used
+// directly with a hand-written ServiceDesc.
+func (b *Bus) Register(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Service, error) {
+	o := serviceOptions{maxConcurrent: 1, retry: DefaultRetryPolicy(), eventConcurrency: b.cfg.DefaultPrefetch}
+	for _, opt := range opts {
+		opt.applyService(&o)
+	}
+	if err := o.validate(); err != nil {
+		return nil, err
+	}
+	if impl == nil {
+		return nil, errors.New("protobus: Register: nil implementation")
+	}
+	if desc == nil {
+		return nil, errors.New("protobus: Register: nil ServiceDesc")
+	}
+	if desc.HandlerType != nil {
+		ht := reflect.TypeOf(desc.HandlerType)
+		if ht.Kind() != reflect.Pointer || ht.Elem().Kind() != reflect.Interface {
+			return nil, fmt.Errorf("protobus: Register: HandlerType must be a nil pointer to an interface, got %v", ht)
+		}
+		if got := reflect.TypeOf(impl); !got.Implements(ht.Elem()) {
+			return nil, fmt.Errorf("protobus: Register: %v does not implement %v", got, ht.Elem())
+		}
+	}
+	d, err := b.files.FindDescriptorByName(protoreflect.FullName(desc.ServiceName))
+	if err != nil {
+		return nil, fmt.Errorf("%w %q: %w", ErrUnknownService, desc.ServiceName, err)
+	}
+	sd, ok := d.(protoreflect.ServiceDescriptor)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q is a %T, not a service", ErrUnknownService, desc.ServiceName, d)
 	}
 
-	// Check parameter types
-	if t.In(1) != reflect.TypeOf((*context.Context)(nil)).Elem() {
-		return false
+	s := &Service{
+		bus: b, desc: desc, impl: impl, contract: sd, name: desc.ServiceName, opts: o,
+		unary: map[string]MethodDesc{}, streams: map[string]StreamDesc{},
+		unaryIC: chainUnary(o.unaryInterceptors), streamIC: chainStream(o.streamInterceptors),
 	}
-	if t.In(2) != reflect.TypeOf(map[string]interface{}{}) {
-		return false
+	if o.instance != "" {
+		s.name += "." + o.instance
 	}
-	if t.In(3) != reflect.TypeOf("") || t.In(4) != reflect.TypeOf("") {
-		return false
+	for _, m := range desc.Methods {
+		md := sd.Methods().ByName(protoreflect.Name(m.MethodName))
+		switch {
+		case md == nil:
+			return nil, fmt.Errorf("protobus: Register: %s declares no method %q", desc.ServiceName, m.MethodName)
+		case md.IsStreamingServer() || md.IsStreamingClient():
+			return nil, fmt.Errorf("protobus: Register: %s.%s is streaming but registered as unary", desc.ServiceName, m.MethodName)
+		}
+		s.unary[m.MethodName] = m
 	}
-
-	// Must have 2 outputs: map[string]interface{}, error
-	if t.NumOut() != 2 {
-		return false
+	for _, st := range desc.Streams {
+		md := sd.Methods().ByName(protoreflect.Name(st.MethodName))
+		switch {
+		case md == nil:
+			return nil, fmt.Errorf("protobus: Register: %s declares no method %q", desc.ServiceName, st.MethodName)
+		case !md.IsStreamingServer() || md.IsStreamingClient():
+			return nil, fmt.Errorf("protobus: Register: %s.%s is not server-streaming", desc.ServiceName, st.MethodName)
+		}
+		s.streams[st.MethodName] = st
 	}
-	if t.Out(0) != reflect.TypeOf(map[string]interface{}{}) {
-		return false
-	}
-	if !t.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		return false
-	}
-
-	return true
+	s.requests = newConsumer(b, s.requestSpec())
+	return s, nil
 }
 
-// Init initializes the service.
-func (s *BaseService) Init() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.initialized {
-		return ErrAlreadyInitialized
+func (o *serviceOptions) validate() error {
+	if o.maxConcurrent < 1 || o.maxConcurrent > 65535 {
+		return fmt.Errorf("protobus: WithMaxConcurrent must be within 1..65535, got %d", o.maxConcurrent)
 	}
-
-	// Initialize message listener
-	if err := s.listener.Init(s.onMessage, s.serviceName, s.ctx.ExchangeName()); err != nil {
-		return fmt.Errorf("failed to init listener: %w", err)
+	if o.eventConcurrency < 1 || o.eventConcurrency > 65535 {
+		return fmt.Errorf("protobus: WithEventConcurrency must be within 1..65535, got %d", o.eventConcurrency)
 	}
-
-	// Initialize event listener
-	eventsQueue := s.serviceName + ".Events"
-	if err := s.eventListener.Init(s.onEvent, eventsQueue, s.ctx.EventsExchangeName()); err != nil {
-		return fmt.Errorf("failed to init event listener: %w", err)
+	if o.retry.MaxRetries < 0 || o.retry.MaxRetries > 0 && o.retry.Delay <= 0 || o.retry.MessageTTL < 0 {
+		return fmt.Errorf("protobus: invalid RetryPolicy %+v", o.retry)
 	}
-
-	// Subscribe to requests
-	pattern := fmt.Sprintf("REQUEST.%s.*", s.serviceName)
-	if err := s.listener.Subscribe(pattern); err != nil {
-		return fmt.Errorf("failed to subscribe: %w", err)
+	if o.eventRetry.MaxRetries < 0 || o.eventRetry.MaxRetries > 0 && o.eventRetry.Delay <= 0 {
+		return fmt.Errorf("protobus: invalid EventRetryPolicy %+v", o.eventRetry)
 	}
-
-	// Start listeners
-	if err := s.listener.Start(); err != nil {
-		return fmt.Errorf("failed to start listener: %w", err)
+	if o.processingTimeout < 0 {
+		return fmt.Errorf("protobus: negative processing timeout %v", o.processingTimeout)
 	}
-	if err := s.eventListener.Start(); err != nil {
-		return fmt.Errorf("failed to start event listener: %w", err)
+	if err := validInstance(o.instance); err != nil {
+		return err
 	}
-
-	s.initialized = true
-	logInfo("Service %s initialized", s.serviceName)
+	if p := o.maxPriority; p != nil {
+		if *p < 1 {
+			return fmt.Errorf("%w: WithMaxPriority must be within 1..255, got 0; %d is recommended",
+				ErrInvalidPriority, RecommendedMaxPriority)
+		}
+		if o.earlyAck {
+			return fmt.Errorf("%w: WithMaxPriority requires late ack: early ack takes requests off the queue "+
+				"before a higher-priority arrival can overtake them", ErrInvalidPriority)
+		}
+	}
 	return nil
 }
 
-func (s *BaseService) onMessage(ctx context.Context, body []byte, correlationID string) ([]byte, error) {
-	request, err := s.ctx.Factory().DecodeRequest(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode request: %w", err)
+// Name is the name the service runs under: its contract name, plus the
+// instance name if it has one.
+func (s *Service) Name() string { return s.name }
+
+// Contract is the service's fully-qualified name in its .proto.
+func (s *Service) Contract() string { return string(s.contract.FullName()) }
+
+func (s *Service) requestSpec() consumerSpec {
+	cfg := s.bus.cfg
+	args := amqp.Table{}
+	if s.opts.retry.MessageTTL > 0 {
+		args["x-message-ttl"] = intHeader(s.opts.retry.MessageTTL.Milliseconds())
 	}
-
-	// Extract method name (last part of method path)
-	parts := strings.Split(request.Method, ".")
-	methodName := strings.ToLower(parts[len(parts)-1])
-
-	logDebug("Received request %s (%s)", request.Method, correlationID)
-
-	s.mu.RLock()
-	streamHandler, isStream := s.streamHandlers[methodName]
-	handler, isUnary := s.handlers[methodName]
-	s.mu.RUnlock()
-
-	// Streaming path. Sentinel response signals the listener to consume
-	// chunks via the per-call stream sink installed on the listener.
-	if isStream {
-		return s.runStream(ctx, request, correlationID, streamHandler)
+	if p := s.opts.maxPriority; p != nil {
+		args["x-max-priority"] = int32(*p)
 	}
-
-	if !isUnary {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidMethod, methodName)
+	timeout := cfg.ProcessingTimeout
+	if s.opts.processingTimeout > 0 {
+		timeout = s.opts.processingTimeout
 	}
-
-	result, err := handler(ctx, request.Data, request.Actor, correlationID)
-	if err != nil {
-		logError("Handler error: %v", err)
-		return s.ctx.Factory().BuildResponse(request.Method, nil, err)
+	spec := consumerSpec{
+		queue:        s.name,
+		queueArgs:    args,
+		exchange:     cfg.BusExchange,
+		bindings:     func() []string { return []string{"REQUEST." + s.name + ".*"} },
+		lateAck:      !s.opts.earlyAck,
+		prefetch:     s.opts.maxConcurrent,
+		timeout:      timeout,
+		timeoutReply: s.timeoutReply,
+		handle:       s.handle,
+		describe:     s.name,
 	}
-
-	logDebug("Sending result for %s", request.Method)
-	return s.ctx.Factory().BuildResponse(request.Method, result, nil)
+	if s.opts.earlyAck {
+		spec.concurrency = s.opts.maxConcurrent
+	}
+	if r := s.opts.retry; r.MaxRetries > 0 && !s.opts.earlyAck {
+		rs := &retrySpec{
+			maxRetries: r.MaxRetries,
+			exchange:   s.name + ".Retry.Exchange",
+			queue:      s.name + ".Retry",
+			dlq:        s.name + ".DLQ",
+		}
+		spec.retry = rs
+		spec.declare = func(ch transport.Channel, _ string) error {
+			return declareRetryTopology(ch, rs, r.Delay, cfg.BusExchange)
+		}
+	}
+	return spec
 }
 
-// runStream drives a server-streaming handler. The handler emits chunks via
-// `send`, which the framework publishes individually as separate AMQP
-// messages on the reply queue with x-protobus-final / x-protobus-seq headers.
-//
-// Returning nil from this function (with no reply-bytes) signals onMessage's
-// caller to skip the unary reply path — we've already published everything
-// ourselves.
-func (s *BaseService) runStream(
-	ctx context.Context,
-	request *RequestContainer,
-	correlationID string,
-	handler StreamingHandler,
-) ([]byte, error) {
-	// The listener stashes the reply destination + publisher on ctx before
-	// dispatching. For streaming we publish many chunks to that one queue.
-	sink := streamSinkFromContext(ctx)
-	if sink == nil || sink.ReplyTo == "" {
-		// Request had no ReplyTo (one-way) — drain the handler for any
-		// side-effects but don't try to publish.
-		_ = handler(ctx, request.Data, request.Actor, correlationID,
-			func(map[string]interface{}) error { return nil })
-		return nil, nil
+// declareRetryTopology declares the dead-letter queue, the retry queue (whose
+// TTL dead-letters back to deadLetterTo under the message's own routing key)
+// and the retry exchange that preserves that key on the way in.
+func declareRetryTopology(ch transport.Channel, rs *retrySpec, delay time.Duration, deadLetterTo string) error {
+	if _, err := ch.QueueDeclare(rs.dlq, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declaring %s: %w", rs.dlq, err)
 	}
-	replyTo := sink.ReplyTo
-	sender := sink.Publish
-
-	// Look-ahead-by-one so we can mark the last chunk with x-protobus-final=true
-	// without an extra empty terminal message.
-	var (
-		seq      uint32
-		buffered map[string]interface{}
-		mu       sync.Mutex
-	)
-
-	send := func(chunk map[string]interface{}) error {
-		mu.Lock()
-		defer mu.Unlock()
-		if buffered != nil {
-			body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
-			if err != nil {
-				return err
-			}
-			sender(replyTo, correlationID, body, seq, false)
-			seq++
+	_, err := ch.QueueDeclare(rs.queue, true, false, false, false, amqp.Table{
+		"x-message-ttl":          intHeader(delay.Milliseconds()),
+		"x-dead-letter-exchange": deadLetterTo,
+	})
+	if err != nil {
+		var ae *amqp.Error
+		if errors.As(err, &ae) && ae.Code == amqp.PreconditionFailed {
+			return fmt.Errorf("%w: %s already exists with other arguments (most likely a different retry delay, "+
+				"now %v). RabbitMQ cannot change a queue's x-message-ttl in place: drain and delete the queue, or "+
+				"keep the original delay: %v", ErrRetryQueueMismatch, rs.queue, delay, err)
 		}
-		buffered = chunk
+		return fmt.Errorf("declaring %s: %w", rs.queue, err)
+	}
+	if err := ch.ExchangeDeclare(rs.exchange, "topic", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declaring %s: %w", rs.exchange, err)
+	}
+	if err := ch.QueueBind(rs.queue, "#", rs.exchange, false, nil); err != nil {
+		return fmt.Errorf("binding %s: %w", rs.queue, err)
+	}
+	return nil
+}
+
+// Start declares the service's topology and begins serving requests and
+// event subscriptions. It waits for the connection if a reconnection is under
+// way. It is idempotent, and a start that failed can be retried.
+func (s *Service) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return nil
+	}
+	events := s.events
+	s.mu.Unlock()
+
+	if err := s.requests.start(ctx); err != nil {
+		return fmt.Errorf("protobus: starting %s: %w", s.name, err)
+	}
+	fail := func(err error) error {
+		// Leave nothing half-started: a consumer serving requests that
+		// Shutdown does not know about would be cut off mid-work.
+		s.requests.stopConsuming()
+		return err
+	}
+	if events != nil {
+		if err := events.Start(ctx); err != nil {
+			return fail(err)
+		}
+	}
+	if err := s.bus.ensureCancelListener(ctx); err != nil {
+		if events != nil {
+			events.consumer.stopConsuming()
+		}
+		return fail(err)
+	}
+	s.mu.Lock()
+	s.started = true
+	s.mu.Unlock()
+	s.bus.mu.Lock()
+	s.bus.services = append(s.bus.services, s)
+	s.bus.mu.Unlock()
+	s.bus.log.LogAttrs(ctx, slog.LevelInfo, "service ready", attrOperation("start"), attrService(s.name))
+	return nil
+}
+
+// StopConsuming stops taking new requests and events, leaving channels open so
+// work in hand can finish and settle. It is the first step of a graceful
+// shutdown (Bus.Shutdown and Run do it for you), and it is final: a
+// reconnection does not resume consumption.
+func (s *Service) StopConsuming(ctx context.Context) error {
+	s.requests.stopConsuming()
+	s.mu.Lock()
+	events := s.events
+	s.mu.Unlock()
+	if events != nil {
+		return events.StopConsuming(ctx)
+	}
+	return nil
+}
+
+// Close stops the service and closes its channels at once. Handlers still
+// running are cancelled and their requests redelivered; use Bus.Shutdown to
+// let them finish. It is idempotent.
+func (s *Service) Close() error {
+	s.requests.close()
+	s.mu.Lock()
+	events := s.events
+	s.mu.Unlock()
+	if events != nil {
+		return events.Close()
+	}
+	return nil
+}
+
+// Events returns the service's event listener, consuming the durable queue
+// "<service>.Events". Subscribe to it before or after Start.
+func (s *Service) Events() *EventListener {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.events == nil {
+		s.events = s.bus.newEventListener(s.name+".Events", s.opts.eventConcurrency, s.opts.eventRetry)
+		if s.started {
+			// Subscriptions after Start start the listener on first use.
+			s.events.lazy = true
+		}
+	}
+	return s.events
+}
+
+// ---- request handling ----------------------------------------------------------
+
+// payloadError marks a request payload that did not decode.
+type payloadError struct{ err error }
+
+func (e *payloadError) Error() string { return "payload did not decode: " + e.err.Error() }
+func (e *payloadError) Unwrap() error { return e.err }
+
+func (s *Service) encodeError(method string, err error) []byte {
+	ce := sanitizeForCaller(err, s.bus.cfg.ExposeInternalErrors)
+	body, _ := wire.AppendResponse(nil, wire.Response{Error: &wire.Error{Method: method, Message: ce.Message, Code: ce.Code}})
+	return body
+}
+
+// rejection answers a request the service will not run. It is a handled
+// PROTOCOL_ERROR: the same bytes would fail the same way on every
+// redelivery, so retrying buys nothing.
+func (s *Service) rejection(label, reason string) handlerResult {
+	s.bus.log.LogAttrs(context.Background(), slog.LevelError, "rejected request", attrOperation("dispatch"),
+		attrService(s.name), attrMethod(label), slog.String("reason", clip(reason)), attrOutcome(outcomeRejected))
+	return handlerResult{reply: s.encodeError(label, newProtocolError(reason))}
+}
+
+func (s *Service) timeoutReply(d *amqp.Delivery, err error) []byte {
+	return s.encodeError(s.Contract()+"."+lastSegment(d.RoutingKey), err)
+}
+
+func (s *Service) handle(ctx context.Context, d *amqp.Delivery, ctl *deliveryControl) handlerResult {
+	contract := s.Contract()
+
+	// The envelope first, the payload later. The envelope names the method,
+	// and the method chooses the schema the payload is read with, so it must
+	// be checked against this service's contract before the bytes are
+	// interpreted.
+	env, err := wire.DecodeRequest(d.Body)
+	if err != nil {
+		label := d.RoutingKey
+		if label == "" {
+			label = "unknown"
+		}
+		return s.rejection(label, "request envelope did not decode")
+	}
+
+	// Rejections are labelled with the method the ROUTING KEY names: the
+	// body's method is exactly what is in dispute.
+	keyMethod := lastSegment(d.RoutingKey)
+	if d.RoutingKey == "" {
+		keyMethod = lastSegment(env.Method)
+	}
+	label := contract + "." + keyMethod
+
+	// Dispatch is bound to the routing key the broker delivered on, not to
+	// the publisher-controlled body. Otherwise a client allowed to publish to
+	// one method could have another executed, and RabbitMQ topic permissions
+	// would mean nothing.
+	if d.RoutingKey != "" {
+		if !strings.HasPrefix(d.RoutingKey, "REQUEST."+s.name+".") {
+			return s.rejection(label, fmt.Sprintf("routing key %s does not belong to service %s", d.RoutingKey, s.name))
+		}
+		if keyMethod != lastSegment(env.Method) {
+			return s.rejection(label, fmt.Sprintf("request method %s contradicts routing key %s", env.Method, d.RoutingKey))
+		}
+	}
+	// The body must name a method of THIS contract, in full: no extra
+	// segments, no other service whose schema happens to be loaded.
+	service, method, ok := splitMethodName(env.Method)
+	if !ok {
+		return s.rejection(label, fmt.Sprintf("request method %s is not a qualified method name", env.Method))
+	}
+	if service != contract {
+		return s.rejection(label, fmt.Sprintf("request method %s is not a method of %s", env.Method, contract))
+	}
+	md := s.contract.Methods().ByName(protoreflect.Name(method))
+	if md == nil {
+		return s.rejection(label, fmt.Sprintf("%s declares no method %s", contract, method))
+	}
+
+	info := &CallInfo{
+		Method: env.Method, Actor: env.Actor, CorrelationID: d.CorrelationId, MessageID: d.MessageId,
+		RoutingKey: d.RoutingKey, Redelivered: d.Redelivered, Attempt: retryCount(d.Headers), Headers: copyHeaders(d.Headers),
+	}
+	ctx = withCallInfo(ctx, info)
+	dec := func(m proto.Message) error {
+		if err := unmarshal(env.Data, m); err != nil {
+			return &payloadError{err}
+		}
 		return nil
 	}
 
-	handlerErr := handler(ctx, request.Data, request.Actor, correlationID, send)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if handlerErr != nil {
-		// Terminal error: flush any buffered chunk as non-final, then send
-		// the error as the final terminal.
-		if buffered != nil {
-			body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
-			if err == nil {
-				sender(replyTo, correlationID, body, seq, false)
-				seq++
-			}
+	if md.IsStreamingServer() {
+		st, ok := s.streams[method]
+		if !ok {
+			return s.rejection(env.Method, "invalid service method "+method)
 		}
-		body, _ := s.ctx.Factory().BuildResponse(request.Method, nil, handlerErr)
-		sender(replyTo, correlationID, body, seq, true)
-	} else if buffered != nil {
-		// Normal completion — last buffered chunk becomes final.
-		body, err := s.ctx.Factory().BuildResponse(request.Method, buffered, nil)
-		if err != nil {
-			return nil, err
-		}
-		sender(replyTo, correlationID, body, seq, true)
-	} else {
-		// Empty stream — single terminal with an empty body so the client
-		// iterator ends cleanly without yielding a spurious chunk. Matches
-		// the Python and TS ports.
-		sender(replyTo, correlationID, []byte{}, 0, true)
+		ctl.disarmTimeout()
+		return s.serveStream(ctx, d, ctl, env.Method, st, dec)
 	}
-
-	// Returning (nil, nil) tells the listener not to publish a unary reply.
-	return nil, nil
-}
-
-func (s *BaseService) onEvent(ctx context.Context, body []byte, correlationID string) ([]byte, error) {
-	// Events don't need responses
-	event, err := s.ctx.Factory().DecodeEvent(body)
+	m, ok := s.unary[method]
+	if !ok {
+		return s.rejection(env.Method, "invalid service method "+method)
+	}
+	resp, err := m.Handler(s.impl, ctx, dec, s.unaryIC)
 	if err != nil {
-		logWarn("Failed to decode event: %v", err)
-		return nil, nil
+		return s.failure(ctx, env.Method, err)
 	}
-
-	logDebug("Received event: %s", event.Type)
-	// Event handling would be implemented by specific services
-	return nil, nil
-}
-
-// PublishEvent publishes an event.
-func (s *BaseService) PublishEvent(ctx context.Context, eventType string, data map[string]interface{}, topic string) error {
-	return s.ctx.PublishEvent(ctx, eventType, data, topic)
-}
-
-// SubscribeEvent subscribes to events (would need event handler registration).
-func (s *BaseService) SubscribeEvent(pattern string) error {
-	return s.eventListener.Subscribe(pattern)
-}
-
-// Stop stops the service.
-func (s *BaseService) Stop() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.listener.Stop(); err != nil {
-		logWarn("Failed to stop listener: %v", err)
+	var data []byte
+	if resp != nil {
+		if data, err = marshal(resp); err != nil {
+			return s.failure(ctx, env.Method, fmt.Errorf("encoding the response of %s: %w", env.Method, err))
+		}
 	}
-	if err := s.eventListener.Stop(); err != nil {
-		logWarn("Failed to stop event listener: %v", err)
-	}
-
-	s.initialized = false
-	logInfo("Service %s stopped", s.serviceName)
-	return nil
+	body, _ := wire.AppendResponse(nil, wire.Response{Result: &wire.Result{Method: env.Method, Data: data}})
+	return handlerResult{reply: body}
 }
 
-// Context returns the service's context.
-func (s *BaseService) Context() *Context {
-	return s.ctx
+// failure classifies a handler error. Malformed payloads and unimplemented
+// methods are protocol errors and handled errors are answered at once; both
+// are acknowledged, never retried. Anything else is an infrastructure failure:
+// it is logged in full here and goes through the retry ladder, carrying the
+// sanitised reply the caller gets once the ladder ends.
+func (s *Service) failure(ctx context.Context, method string, err error) handlerResult {
+	var pe *payloadError
+	switch {
+	case errors.As(err, &pe):
+		return s.rejection(method, "payload did not decode as the request type of "+method)
+	case errors.Is(err, ErrUnimplemented):
+		return s.rejection(method, "invalid service method "+lastSegment(method))
+	}
+	if h, ok := asAnswerable(err); ok {
+		s.bus.log.LogAttrs(ctx, slog.LevelInfo, "handled error", attrOperation("handle"), attrService(s.name),
+			attrMethod(method), slog.String("code", h.Code))
+		return handlerResult{reply: s.encodeError(method, err)}
+	}
+	ci, _ := CallInfoFromContext(ctx)
+	s.bus.log.LogAttrs(ctx, slog.LevelError, "handler failed", attrOperation("handle"), attrService(s.name),
+		attrMethod(method), attrCorrelationID(ci.CorrelationID), attrError(err))
+	return handlerResult{err: err, errReply: s.encodeError(method, err)}
 }
