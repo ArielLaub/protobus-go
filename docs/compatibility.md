@@ -112,4 +112,5 @@ protobufjs `create()`, which does not convert names: an enum given by name is
 written as `0`. A TypeScript service that returns a decoded message unchanged
 therefore turns every enum into its zero value. The cross-language suite's
 TypeScript peer sends enum numbers to work around it; Go and Python are
-unaffected.
+unaffected. Tracked as
+[protobus#40](https://github.com/ArielLaub/protobus/issues/40).

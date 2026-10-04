@@ -34,7 +34,7 @@ const PROTO = fs.readFileSync(path.join(PROTO_DIR, 'interop.proto')).toString();
 // TypeScript protobus decodes an enum to its NAME but encodes through
 // protobufjs's create(), which does not convert names: a name is written as 0.
 // So values sent from here carry the enum NUMBER, and decoded values are
-// expected to carry the name. (A TS-side bug; see crosslang/README.md.)
+// expected to carry the name. (A TS-side bug: https://github.com/ArielLaub/protobus/issues/40)
 function canonical(forSending) {
     return {
         amount: 10n ** 30n,
