@@ -19,6 +19,10 @@ This is the Go port of [protobus](https://github.com/ArielLaub/protobus)
 Python callers and the other way round, with streaming, events, custom types
 and error codes included. See [Compatibility](docs/compatibility.md).
 
+**Status: stable.** Since v2.0.0 the Go port is no longer experimental: it is at
+parity with the TypeScript and Python ports, and every commit runs all three
+against each other, in both directions, on RabbitMQ 3 and 4.
+
 ---
 
 ## Install
