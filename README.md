@@ -382,7 +382,7 @@ one bus per process and share it.
 ## Wire compatibility
 
 protobus-go speaks the protobus wire protocol exactly as TypeScript protobus
-2.4 and protobus-py 2.0 do: the same exchanges, queues, envelopes, headers and
+2.5 and protobus-py 2.0 do: the same exchanges, queues, envelopes, headers and
 error codes, and the same environment variables for configuration. Replicas of
 one service in different languages can share its queue and climb one retry
 ladder together. A cross-language suite runs Go against the other ports' real

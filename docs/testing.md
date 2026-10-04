@@ -262,7 +262,7 @@ go test -count=1 -v ./crosslang/...
 
 A missing or unbuilt peer skips its tests rather than failing them, so check
 the output for `SKIP` when you mean to test all three. CI pins the peers to
-TypeScript protobus 2.4.0 and protobus-py 2.0.0 by commit and bumps them
+TypeScript protobus 2.5.0 and protobus-py 2.0.0 by commit and bumps them
 deliberately, and runs this suite against RabbitMQ 3 with Node 20 and Python
 3.12.
 

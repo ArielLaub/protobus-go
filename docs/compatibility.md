@@ -1,7 +1,7 @@
 # Compatibility with the TypeScript and Python ports
 
 protobus-go speaks the protobus wire protocol exactly as
-[protobus](https://github.com/ArielLaub/protobus) (TypeScript, 2.4) and
+[protobus](https://github.com/ArielLaub/protobus) (TypeScript, 2.5) and
 [protobus-py](https://github.com/ArielLaub/protobus-py) (2.0) do. Services and
 clients in all three languages can share one broker, one schema and even one
 queue: replicas of a service in different languages compete for its requests
@@ -92,7 +92,7 @@ service chooses.
 
 These are deliberate and none changes what is on the wire.
 
-| | Go | TypeScript 2.4 | Python 2.0 |
+| | Go | TypeScript 2.5 | Python 2.0 |
 |---|---|---|---|
 | Who declares the core exchanges | every process, for what it publishes to | services only | every process |
 | Processing timeout, after the last retry | caller answered: `PROCESSING_TIMEOUT` | caller waits for its own timeout | caller answered: `PROCESSING_TIMEOUT` |
@@ -107,10 +107,11 @@ These are deliberate and none changes what is on the wire.
 
 ### A TypeScript caveat found by the suite
 
-TypeScript protobus decodes an enum to its value *name* but encodes through
-protobufjs `create()`, which does not convert names: an enum given by name is
-written as `0`. A TypeScript service that returns a decoded message unchanged
-therefore turns every enum into its zero value. The cross-language suite's
-TypeScript peer sends enum numbers to work around it; Go and Python are
-unaffected. Tracked as
-[protobus#40](https://github.com/ArielLaub/protobus/issues/40).
+TypeScript protobus before 2.5.0 decoded an enum to its value *name* but
+encoded through protobufjs `create()`, which does not convert names: an enum
+given by name was written as `0`, so a TypeScript service that returned a
+decoded message unchanged turned every enum into its zero value. Fixed in
+2.5.0 ([protobus#40](https://github.com/ArielLaub/protobus/issues/40)); the
+cross-language suite now sends enums by name and echoes decoded messages
+unchanged. Use 2.5.0 or later wherever TypeScript services relay decoded
+messages. Go and Python were never affected.
