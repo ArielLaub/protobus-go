@@ -117,6 +117,11 @@ func printTokens(ctx context.Context, client chat.AssistantClient) error {
 - **Ending.** The loop ends normally when the service finishes. A failure is
   yielded once, with a nil token, and ends the loop.
 - A context that is already cancelled yields its error and publishes nothing.
+- **Cancellation wins over buffered chunks.** Once the context ends, the loop
+  yields the context's error and nothing more, even if later chunks, or the
+  final frame, have already arrived. A stream that has already yielded its
+  last chunk and received its final frame has completed, and ends normally.
+  Buffered chunks are released either way.
 
 | Yielded error | Cause |
 |---|---|
@@ -191,8 +196,9 @@ Cancellation is best effort by design:
 - If the process cannot declare the exchange (credentials without configure
   permission on it), services start anyway and log a warning; their streams
   run to completion.
-- No cancel is sent when the stream completed, the connection was lost or the
-  bus was closed. One is sent after a stream that ended with a service error;
+- No cancel is sent when the stream completed (its final frame had arrived,
+  even if the caller stopped before reading every chunk), the connection was
+  lost or the bus was closed. One is sent after a stream that ended with a service error;
   the service has already finished, so it is ignored.
 
 Only streams listen for cancels; a unary call that times out is not

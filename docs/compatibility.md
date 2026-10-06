@@ -75,7 +75,10 @@ three languages to prove it.
   `x-first-failure-time`, `x-last-error` (the error's class and code, never an
   unhandled error's message), and on the DLQ `x-original-queue` and
   `x-dlq-time`; they keep `contentType`, `contentEncoding`, `priority`,
-  `timestamp`, `type` and `appId`, and drop `expiration` and `userId`.
+  `timestamp`, `type` and `appId`, and drop `expiration` and `userId`. The Go
+  port routes and labels them by the routing key the broker delivered, never
+  by an incoming `x-original-routing-key` (the retry topology keeps the two
+  equal for every port's copies), and drops the `CC` and `BCC` headers.
 - Readers accept every encoding peers produce: integer headers of any width or
   as strings, `x-protobus-final` as a boolean, number or text.
 

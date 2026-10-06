@@ -87,13 +87,12 @@ func TestRetryCountTreatsGarbageAsZero(t *testing.T) {
 	}
 }
 
-func TestOriginalRoutingKeyPrefersTheHeader(t *testing.T) {
-	d := &amqp.Delivery{RoutingKey: "REQUEST.A.b", Headers: amqp.Table{headerOriginalKey: []byte("REQUEST.A.c")}}
-	if got := originalRoutingKey(d); got != "REQUEST.A.c" {
-		t.Fatal(got)
-	}
-	d.Headers = amqp.Table{headerOriginalKey: ""}
-	if got := originalRoutingKey(d); got != "REQUEST.A.b" {
-		t.Fatal(got)
+func TestOriginalRoutingKeyIsTheDeliveredKey(t *testing.T) {
+	// The header is publisher-controlled; the delivered key is the broker's.
+	for _, forged := range []any{"REQUEST.A.c", []byte("REQUEST.A.c"), "", nil} {
+		d := &amqp.Delivery{RoutingKey: "REQUEST.A.b", Headers: amqp.Table{headerOriginalKey: forged}}
+		if got := originalRoutingKey(d); got != "REQUEST.A.b" {
+			t.Fatalf("header %#v: %s", forged, got)
+		}
 	}
 }

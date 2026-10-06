@@ -93,14 +93,15 @@ func (b *Bus) NewEventListener(queue string, opts ...ListenerOption) (*EventList
 func (b *Bus) newEventListener(queue string, concurrency int, retry EventRetryPolicy) *EventListener {
 	l := &EventListener{bus: b, queue: queue, router: topic.New[*subscription]()}
 	spec := consumerSpec{
-		queue:    queue,
-		exchange: b.cfg.EventsExchange,
-		bindings: l.bindings,
-		lateAck:  true,
-		prefetch: concurrency,
-		timeout:  b.cfg.ProcessingTimeout,
-		handle:   l.handle,
-		describe: queue,
+		queue:       queue,
+		exchange:    b.cfg.EventsExchange,
+		bindings:    l.bindings,
+		lateAck:     true,
+		prefetch:    concurrency,
+		concurrency: concurrency,
+		timeout:     b.cfg.ProcessingTimeout,
+		handle:      l.handle,
+		describe:    queue,
 	}
 	if retry.MaxRetries > 0 && queue != "" {
 		rs := &retrySpec{

@@ -436,10 +436,11 @@ func (d *dispatcher) call(ctx context.Context, routingKey string, body []byte, o
 		if errors.Is(err, errChannelGone) {
 			continue // never sent; wait for a channel and send again
 		}
-		// The publish outcome is the more specific answer than an expired
-		// deadline: "the request never left" beats "no reply in time".
-		var pe *PublishError
-		if errors.As(err, &pe) && errors.Is(pe.Err, context.DeadlineExceeded) {
+		// The deadline ran out while publishing: before the request was sent
+		// (waiting for a confirm slot or the send path) or while its confirm
+		// was awaited. Either way it is the call's timeout, and the publish
+		// error stays in the chain as the more specific answer.
+		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, timeout(err)
 		}
 		return nil, err
@@ -592,6 +593,14 @@ func (s *clientStream) next() (chunk []byte, done bool, err error) {
 	return nil, s.ended, nil
 }
 
+// finished reports whether the producer's final frame has arrived and the
+// stream did not fail: the producer has nothing left to cancel.
+func (s *clientStream) finished() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ended && s.err == nil
+}
+
 // errStreamReleased marks a stream its caller has finished with, so a frame
 // still on its way is dropped rather than buffered for no one.
 var errStreamReleased = errors.New("protobus: stream released")
@@ -614,6 +623,13 @@ func (s *clientStream) release() {
 // stream publishes a request expecting a streaming reply and yields the raw
 // reply frames. Nothing is published until the sequence is ranged over, and
 // each range performs one call.
+//
+// Cancellation wins over buffered frames: once ctx is done, no further chunk
+// is yielded, even if chunks (or the final frame) have already arrived, and
+// the context's error is the last value. The only exception is a stream whose
+// every chunk has already been yielded and whose final frame has arrived: it
+// has completed, and ends cleanly. A cancel notice goes to the producer unless
+// its final frame had arrived.
 func (d *dispatcher) stream(ctx context.Context, routingKey string, body []byte, o *streamOptions) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		if err := ctx.Err(); err != nil {
@@ -656,6 +672,11 @@ func (d *dispatcher) stream(ctx context.Context, routingKey string, body []byte,
 				yield(nil, err)
 				return
 			case chunk != nil:
+				if cerr := ctx.Err(); cerr != nil {
+					completed = s.finished()
+					yield(nil, cerr)
+					return
+				}
 				resetTimer(timer, idle)
 				if !yield(chunk, nil) {
 					return // the caller broke out: tell the producer to stop
@@ -673,6 +694,7 @@ func (d *dispatcher) stream(ctx context.Context, routingKey string, body []byte,
 				yield(nil, fmt.Errorf("%w: nothing for %v (stream %s)", ErrStreamTimeout, idle, s.id))
 				return
 			case <-ctx.Done():
+				completed = s.finished()
 				yield(nil, ctx.Err())
 				return
 			}

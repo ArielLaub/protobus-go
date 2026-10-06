@@ -64,7 +64,9 @@ type serviceOptions struct {
 func serviceOpt(f func(*serviceOptions)) ServiceOption { return serviceOption{option{service: f}} }
 
 // WithMaxConcurrent sets how many requests the service handles at once: the
-// consumer's prefetch, each delivery on its own goroutine. Default 1.
+// consumer's prefetch, each delivery on its own goroutine. Default 1. It also
+// bounds handlers running: one abandoned by the processing timeout keeps its
+// slot until it returns, though its delivery is settled at the timeout.
 func WithMaxConcurrent(n int) ServiceOption {
 	return serviceOpt(func(o *serviceOptions) { o.maxConcurrent = n })
 }
@@ -84,7 +86,9 @@ func WithEarlyAck() ServiceOption { return serviceOpt(func(o *serviceOptions) { 
 
 // WithProcessingTimeout replaces Config.ProcessingTimeout for this service's
 // unary methods. Streaming methods are bounded by their caller's idle timeout
-// and cancellation instead.
+// and cancellation instead. The attempt fails when it fires, but a handler
+// ignoring its context runs on, holding its WithMaxConcurrent slot, until it
+// returns.
 func WithProcessingTimeout(d time.Duration) ServiceOption {
 	return serviceOpt(func(o *serviceOptions) { o.processingTimeout = d })
 }
@@ -260,9 +264,10 @@ func (s *Service) requestSpec() consumerSpec {
 		handle:       s.handle,
 		describe:     s.name,
 	}
-	if s.opts.earlyAck {
-		spec.concurrency = s.opts.maxConcurrent
-	}
+	// The prefetch bounds deliveries; this bounds running handlers, which
+	// can outnumber them once a processing timeout has settled a delivery
+	// whose handler is still running.
+	spec.concurrency = s.opts.maxConcurrent
 	if r := s.opts.retry; r.MaxRetries > 0 && !s.opts.earlyAck {
 		rs := &retrySpec{
 			maxRetries: r.MaxRetries,

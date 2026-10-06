@@ -37,6 +37,9 @@ const (
 	Ack  ConfirmAction = iota // route the message and confirm it
 	Nack                      // refuse the message (basic.nack); nothing is routed
 	Drop                      // never confirm; nothing is routed
+	// Hold routes the message now but withholds its basic.return (if any) and
+	// its confirm until ReleaseHeld, as a broker slow to answer does.
+	Hold
 )
 
 // Published describes a publish, as handed to a confirm policy.
@@ -174,6 +177,24 @@ func (b *Broker) SetConfirmDelay(f func(Published) time.Duration) {
 	b.mu.Lock()
 	b.confirmDelay = f
 	b.mu.Unlock()
+}
+
+// ReleaseHeld delivers every withheld return and confirm (see Hold), in
+// publish order per channel, and reports how many publishes it released.
+func (b *Broker) ReleaseHeld() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := 0
+	for c := range b.conns {
+		for ch := range c.channels {
+			for _, h := range ch.held {
+				h()
+				n++
+			}
+			ch.held = nil
+		}
+	}
+	return n
 }
 
 // Ops returns a copy of the operation log.

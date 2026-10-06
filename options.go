@@ -298,7 +298,9 @@ func WithTopic(topic string) TopicOption {
 }
 
 // WithEventConcurrency sets how many events are handled at once, each on its
-// own goroutine. Default Config.DefaultPrefetch.
+// own goroutine: the listener's prefetch, and the number of handlers running,
+// counting one abandoned by the processing timeout until it returns. Default
+// Config.DefaultPrefetch.
 func WithEventConcurrency(n int) EventOption {
 	return eventOption{option{
 		service:  func(o *serviceOptions) { o.eventConcurrency = n },

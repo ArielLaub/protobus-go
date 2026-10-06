@@ -121,6 +121,7 @@ type channel struct {
 	cancelL    []chan string
 	events     *eventPump
 	ctagSeq    int
+	held       []func() // withheld returns and confirms (Hold)
 }
 
 type inflight struct {
@@ -183,6 +184,7 @@ func (ch *channel) shutdown(err *amqp.Error, post *[]func()) {
 		}()
 	})
 	ch.closeL, ch.publishL, ch.returnL, ch.cancelL = nil, nil, nil, nil
+	ch.held = nil
 }
 
 func (ch *channel) removeConsumer(cons *consumer, post *[]func()) {
@@ -453,8 +455,9 @@ func (ch *channel) PublishWithContext(ctx context.Context, exchangeName, key str
 	}
 
 	routed := b.route(exchangeName, key, msg, post)
+	var ret *amqp.Return
 	if !routed && mandatory {
-		ret := amqp.Return{
+		ret = &amqp.Return{
 			ReplyCode: amqp.NoRoute, ReplyText: "NO_ROUTE", Exchange: exchangeName, RoutingKey: key,
 			ContentType: msg.ContentType, ContentEncoding: msg.ContentEncoding, Headers: msg.Headers,
 			DeliveryMode: msg.DeliveryMode, Priority: msg.Priority, CorrelationId: msg.CorrelationId,
@@ -462,7 +465,20 @@ func (ch *channel) PublishWithContext(ctx context.Context, exchangeName, key str
 			Timestamp: msg.Timestamp, Type: msg.Type, UserId: msg.UserId, AppId: msg.AppId, Body: msg.Body,
 		}
 		b.ops = append(b.ops, Op{Kind: "return", Exchange: exchangeName, Key: key, MessageID: msg.MessageId, CorrelationID: msg.CorrelationId})
-		ch.emitReturn(ret)
+	}
+	if action == Hold {
+		ch.held = append(ch.held, func() {
+			if ret != nil {
+				ch.emitReturn(*ret)
+			}
+			if ch.confirm {
+				ch.emitConfirm(amqp.Confirmation{DeliveryTag: tag, Ack: true})
+			}
+		})
+		return nil
+	}
+	if ret != nil {
+		ch.emitReturn(*ret)
 	}
 	if ch.confirm {
 		var delay time.Duration

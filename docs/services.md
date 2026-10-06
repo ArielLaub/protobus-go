@@ -144,6 +144,11 @@ unacknowledged requests.
   never holds up the others.
 - A streaming handler holds its slot for the life of its stream, so `n` is
   also how many streams the service serves at once.
+- `n` bounds handlers actually running, not only unacknowledged deliveries. A
+  handler abandoned by the [processing timeout](#processing-timeout) keeps
+  its slot until it returns, although its delivery has already been settled:
+  the next request waits (unacknowledged, within the prefetch) rather than
+  running alongside it.
 - Under `WithEarlyAck` the bound is a counter in the process instead; see
   [Early ack](#early-ack).
 
@@ -298,7 +303,7 @@ DLQ copies drop it. Both are published `mandatory`. protobus adds:
 | Header | On | Value |
 |---|---|---|
 | `x-retry-count` | retry, DLQ | retry copies: the attempt number they are going to (1, 2, …); the DLQ copy: the count it arrived with |
-| `x-original-routing-key` | retry, DLQ | the request's routing key on its first delivery |
+| `x-original-routing-key` | retry, DLQ | the routing key the broker delivered the failing attempt on, which the retry topology keeps equal to the first delivery's. Written for DLQ tooling and the other ports; an incoming value is never read |
 | `x-first-failure-time` | retry, DLQ | Unix milliseconds of the first failure, carried forward unchanged |
 | `x-last-error` | retry, DLQ | the last error's class and code, such as `Error`, `TimeoutError[PROCESSING_TIMEOUT]` or `HandledError[CODE]: message`; never an unhandled error's message, which often quotes the data that caused it |
 | `x-original-queue` | DLQ | the service queue |
@@ -306,6 +311,13 @@ DLQ copies drop it. Both are published `mandatory`. protobus adds:
 
 Inside a handler, `CallInfo.Attempt` is the incoming `x-retry-count` (0 on the
 first delivery).
+
+Retry and DLQ copies are routed by the key the broker delivered the attempt
+on, never by a header: headers are whatever the publisher wrote, and a copy
+is republished with the service's broker permissions. For the same reason the
+copies drop `CC` and `BCC`, RabbitMQ's sender-selected routing headers, which
+RabbitMQ would otherwise also apply when the retry queue dead-letters the copy
+back to `proto.bus`.
 
 ## Early ack
 
@@ -320,7 +332,8 @@ after its reply: at-most-once delivery.
   requeued, having been acked.
 - A request is acked only once a handler slot is free, so at most
   `WithMaxConcurrent` handlers run, with up to as many again waiting
-  unacknowledged in the process.
+  unacknowledged in the process. A handler abandoned by the processing
+  timeout holds its slot until it returns.
 - It cannot be combined with `WithMaxPriority` (`ErrInvalidPriority` at
   registration).
 
@@ -335,10 +348,14 @@ Each attempt of a unary method is bounded by `Config.ProcessingTimeout`
 2. the attempt fails as an unhandled error and climbs the retry ladder;
 3. after the last attempt the caller receives `PROCESSING_TIMEOUT`.
 
-Go cannot stop a goroutine from outside, so a handler that ignores its context
-keeps running after it has been abandoned. It still counts in
-`Bus.InFlight()`, and `Drain` and `Shutdown` wait for it, but its retry may
-start while it is still running. Pass `ctx` to everything a handler calls
+The timeout is reported at once: the attempt is settled (retried, answered or
+dead-lettered) when it fires, not when the handler returns. Go cannot stop a
+goroutine from outside, though, so a handler that ignores its context keeps
+running after it has been abandoned. It still counts in `Bus.InFlight()`,
+`Drain` and `Shutdown` wait for it, and it keeps its `WithMaxConcurrent` slot
+until it returns, so in this process it never overlaps more handlers than the
+bound allows. Its retry may still start on another replica while it is
+running, and a handler that never returns holds its slot for good. Pass `ctx` to everything a handler calls
 (database drivers, HTTP clients, downstream protobus calls) so the abandoned
 attempt actually stops.
 
