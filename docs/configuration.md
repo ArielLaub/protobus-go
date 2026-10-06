@@ -81,8 +81,8 @@ gives them in milliseconds, except `AMQP_HEARTBEAT_SECONDS`.
   side. When it fires, the handler's context is cancelled and the attempt
   fails with `PROCESSING_TIMEOUT`, which goes through the retry ladder like any
   other unhandled failure. Go cannot stop a goroutine from outside, so a
-  handler that ignores its context keeps running and keeps counting in
-  `InFlight` until it returns. `WithProcessingTimeout` overrides it per
+  handler that ignores its context keeps running, and keeps counting in
+  `InFlight` and holding its concurrency slot, until it returns. `WithProcessingTimeout` overrides it per
   service. Streaming methods are not subject to it; they are bounded by the
   caller's idle timeout and cancellation.
 - **`RPCTimeout`** bounds a unary call only when neither the call's context
@@ -95,9 +95,13 @@ gives them in milliseconds, except `AMQP_HEARTBEAT_SECONDS`.
   listeners and of a service's own `Events()` listener. It does not affect
   request concurrency: a service handles one request at a time unless you pass
   `WithMaxConcurrent`.
-- **`PublishConfirmTimeout`** bounds the wait for the broker to confirm a
-  publish. Expiry is an *ambiguous* outcome (`ErrPublishConfirmTimeout`): the
-  broker may have stored the message. See [Errors](errors.md#publish-failures).
+- **`PublishConfirmTimeout`** bounds each of a publish's two waits. Waiting
+  for a confirm slot and for the channel's send path ends, if it expires, in a
+  definite failure: nothing was sent. Once the publish is committed to the
+  transport, waiting for the write and the broker's confirm ends, if it
+  expires, in an *ambiguous* outcome (`ErrPublishConfirmTimeout`): the broker
+  may have stored the message. The caller's context bounds both waits too.
+  See [Errors](errors.md#publish-failures).
 - **`Heartbeat`** is the AMQP heartbeat interval asked of the broker, which
   bounds how long a dead peer goes unnoticed; the lower of the client's and the
   broker's value is negotiated. A `heartbeat` parameter in the broker URL
@@ -108,7 +112,13 @@ gives them in milliseconds, except `AMQP_HEARTBEAT_SECONDS`.
 - **`ConnectionReadyTimeout`** bounds how long a publish, or a `Start`, waits
   for a reconnection in progress before failing with `ErrNotReady`.
 - **`MaxOutstandingConfirms`** bounds unconfirmed publishes per channel.
-  Further publishes wait for a slot.
+  Further publishes wait for a slot. A publish whose caller stopped waiting (a
+  timeout or a cancelled context) keeps its slot until the broker confirms it
+  or the channel closes, so the bound holds for what the broker is tracking,
+  not just for who is waiting. When every slot is held by publishes left
+  unconfirmed for longer than `PublishConfirmTimeout`, the channel is closed
+  (their outcome stays ambiguous: `ErrChannelClosed`) and a fresh one is
+  opened for later publishes.
 - **The three stream buffer bounds** limit what a streaming caller holds that
   it has not consumed yet: chunks and bytes per call, and bytes across every
   call on the bus. Crossing one fails that stream with `ErrStreamBackpressure`

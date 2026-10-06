@@ -176,11 +176,19 @@ A `*PublishError` reports a publish the broker did not positively confirm.
 | `ErrUnroutable` | definite: no queue is bound to the routing key | safe (and useless until a service starts) |
 | `ErrPublishConfirmTimeout` | **ambiguous**: no confirm within `Config.PublishConfirmTimeout` | may duplicate |
 | `ErrChannelClosed` | **ambiguous**: the channel closed before the confirm | may duplicate |
-| the context's error | **ambiguous**: the caller's context ended during the confirm wait | may duplicate |
+| the context's error | **ambiguous**: the caller's context ended during the write or the confirm wait | may duplicate |
 
 `pubErr.Ambiguous()` reports the last three. When the deadline expires during
 the confirm wait, the call returns an `ErrRPCTimeout` that wraps the
-`*PublishError`, so `errors.As` still finds it. `ErrRPCTimeout` and
+`*PublishError`, so `errors.As` still finds it.
+
+A request that was never sent is not a `*PublishError`. The context ending
+while the request waits for a confirm slot or for the channel's send path
+(behind a write that is not progressing) stops it before it is transmitted:
+the call fails with the context's error (`ErrRPCTimeout` for a deadline), and
+the request is never sent, however long the earlier write takes. If the
+channel has no capacity within `Config.PublishConfirmTimeout`, the call fails
+the same definite way. Republishing either is safe. `ErrRPCTimeout` and
 `ErrDisconnected` are ambiguous in the same way: the request may have been
 served.
 

@@ -74,6 +74,12 @@ refuses a body that contradicts its key. Neither replaces the other.
   them on, not by the topic in the body, which the publisher controls.
   `EventInfo` carries both. A typed subscription skips events of another type
   that happen to match its topic.
+- **Retries** are republished on the routing key the broker delivered the
+  failing attempt on. The `x-original-routing-key` header is written but never
+  read, and the publisher's `CC` and `BCC` headers are dropped: otherwise a
+  publisher could make a failing handler republish its message, with the
+  service's permissions, to a service or subscription it could not reach
+  itself.
 
 ## `actor` is a claim, not an identity
 

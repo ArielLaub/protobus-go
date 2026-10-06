@@ -211,6 +211,38 @@ func TestConfirmsAndMandatoryReturnArriveInOrder(t *testing.T) {
 	}
 }
 
+func TestHeldConfirmsAndReturnsAreReleasedInOrder(t *testing.T) {
+	b := New()
+	ch := openCh(t, dial(t, b))
+	_ = ch.Confirm(false)
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 8))
+	returns := ch.NotifyReturn(make(chan amqp.Return, 8))
+	mustDeclareQueue(t, ch, "q", true, false, false, nil)
+	b.SetConfirmPolicy(func(Published) ConfirmAction { return Hold })
+	publish(t, ch, "", "nowhere", true, amqp.Publishing{MessageId: "lost"})
+	publish(t, ch, "", "q", true, amqp.Publishing{MessageId: "routed"})
+	if n := b.QueueDepth("q"); n != 1 {
+		t.Fatalf("a held publish is routed at once; depth %d", n)
+	}
+	noRecv(t, returns, 20*time.Millisecond)
+	noRecv(t, confirms, 0)
+	if n := b.ReleaseHeld(); n != 2 {
+		t.Fatalf("released %d", n)
+	}
+	if r := recv(t, returns); r.MessageId != "lost" {
+		t.Fatalf("return %+v", r)
+	}
+	if c := recv(t, confirms); c.DeliveryTag != 1 || !c.Ack {
+		t.Fatalf("first confirm %+v", c)
+	}
+	if c := recv(t, confirms); c.DeliveryTag != 2 || !c.Ack {
+		t.Fatalf("second confirm %+v", c)
+	}
+	if n := b.ReleaseHeld(); n != 0 {
+		t.Fatalf("released twice: %d", n)
+	}
+}
+
 func TestConfirmFaultInjection(t *testing.T) {
 	b := New()
 	ch := openCh(t, dial(t, b))

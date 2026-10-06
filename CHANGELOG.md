@@ -4,7 +4,49 @@ All notable changes to **protobus-go** are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] — 2026-10-04
+## [Unreleased]
+
+### Security
+
+- **Retries no longer follow publisher-supplied routing.** A retry or
+  dead-letter copy was routed by the incoming `x-original-routing-key` header
+  when present, so a publisher could make a failing handler republish its
+  message, with the service's broker permissions, to another service or
+  subscription. Copies are now routed and labelled by the routing key the
+  broker delivered; the header is still written for DLQ tooling and the other
+  ports, but never read. The copies also drop `CC` and `BCC`, which RabbitMQ
+  applies when the retry queue dead-letters a copy back.
+
+### Fixed
+
+- **Publish cancellation.** Waiting for the channel's send path is
+  cancellable, and a publish whose context ended before it was committed to
+  the transport is never sent. Both pre-send waits (confirm slot, send path)
+  are bounded by the context and by `PublishConfirmTimeout`, and fail
+  definitely (not a `PublishError`); an RPC deadline expiring there is
+  reported as `ErrRPCTimeout`. Every transport write runs on one goroutine per
+  channel, so a caller can stop waiting on a write the AMQP client cannot
+  interrupt, with an ambiguous outcome.
+- **`MaxOutstandingConfirms` bounds what the broker is tracking.** A publish
+  whose caller timed out or was cancelled keeps its confirm slot until the
+  broker confirms it or the channel closes. A channel whose slots are all held
+  by publishes overdue past `PublishConfirmTimeout` is closed and replaced.
+- **Return attribution.** A late `basic.return` for a publish whose caller
+  gave up can no longer fail a later publish reusing its message id and
+  destination: the earlier publish stays tracked until its own confirm.
+- **Handler concurrency under processing timeouts.** `WithMaxConcurrent` and
+  `WithEventConcurrency` now bound running handlers: one abandoned by the
+  processing timeout keeps its slot until it returns. The timeout is still
+  reported and settled at once. This applies under late ack too.
+- **Stream cancellation.** A streaming iterator stops at the next step once
+  its context ends, even with chunks or the final frame buffered, yielding the
+  context's error; a stream already fully delivered ends cleanly. No cancel
+  notice is sent for a producer that had already finished.
+- **Cancel registrations.** A streaming handler that reached its setup after
+  its delivery had timed out left a cancel registration behind for good;
+  registration and release now follow one lifecycle, safe in either order.
+
+## [2.0.0] - 2026-10-04
 
 protobus-go v2 is a rewrite from scratch, published under a new module path:
 
@@ -127,7 +169,7 @@ you migrate.
   `HeaderProtobusSeq` are no longer exported.
 - Go 1.25 or newer is required.
 
-## [1.4.0] — 2026-06-04
+## [1.4.0] - 2026-06-04
 
 ### Added
 

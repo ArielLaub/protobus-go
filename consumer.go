@@ -39,24 +39,41 @@ type deliveryControl struct {
 	once     sync.Once
 	disarmed chan struct{}
 
-	cancels  *cancelRegistry
-	id       string
-	cancel   context.CancelCauseFunc
+	cancels *cancelRegistry
+	id      string
+	cancel  context.CancelCauseFunc
+
+	// The registration's lifecycle: the handler registers (cancellable) and
+	// the delivery releases, from different goroutines and in either order,
+	// because a processing timeout can end the delivery while its handler is
+	// still on its way to registering.
+	mu       sync.Mutex
+	released bool
 	unlisten func()
 }
 
 // cancellable lets the caller's cancel notices reach this delivery. Only
 // streams register: a cancel is how a streaming caller abandons its call,
-// and no port sends one for anything else.
+// and no port sends one for anything else. Once the delivery is released it
+// does nothing: no one would remove the registration.
 func (c *deliveryControl) cancellable() {
-	if c.unlisten == nil && c.cancels != nil {
-		c.unlisten = c.cancels.add(c.id, c.cancel)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.released || c.unlisten != nil || c.cancels == nil {
+		return
 	}
+	c.unlisten = c.cancels.add(c.id, c.cancel)
 }
 
+// release ends the registration for good. It is idempotent.
 func (c *deliveryControl) release() {
-	if c.unlisten != nil {
-		c.unlisten()
+	c.mu.Lock()
+	c.released = true
+	unlisten := c.unlisten
+	c.unlisten = nil
+	c.mu.Unlock()
+	if unlisten != nil {
+		unlisten()
 	}
 }
 
@@ -85,7 +102,8 @@ type consumerSpec struct {
 	lateAck bool
 	// prefetch bounds unacknowledged deliveries (late ack).
 	prefetch int
-	// concurrency bounds concurrent handlers under early ack; 0 is unbounded.
+	// concurrency bounds running handlers, counting a handler abandoned by
+	// the processing timeout until it returns; 0 is unbounded.
 	concurrency int
 	timeout     time.Duration
 	retry       *retrySpec
@@ -127,7 +145,7 @@ type activeHandler struct{ cancel context.CancelCauseFunc }
 
 func newConsumer(b *Bus, spec consumerSpec) *consumer {
 	c := &consumer{bus: b, spec: spec, active: map[*activeHandler]struct{}{}}
-	if !spec.lateAck && spec.concurrency > 0 {
+	if spec.concurrency > 0 {
 		c.sem = make(chan struct{}, spec.concurrency)
 	}
 	return c
@@ -193,8 +211,8 @@ func (c *consumer) restoreTopology(ctx context.Context, conn transport.Conn) err
 	consuming := c.consuming
 	c.mu.Unlock()
 	if old != nil && old != pub {
-		// The old loop lets go of any delivery it holds (an early-ack loop
-		// can be parked on a handler slot), so waiting for it is short.
+		// The old loop lets go of any delivery it holds (it can be parked on
+		// a handler slot), so waiting for it is short.
 		if oldStop != nil {
 			close(oldStop)
 		}
@@ -280,11 +298,21 @@ func (c *consumer) loop(ch transport.Channel, pub *pubChannel, deliveries <-chan
 			}
 		}
 		go func() {
+			// The delivery is done once settled; its handler slot is free
+			// only once the handler has returned. A handler the processing
+			// timeout abandoned is still running user code, and counting it
+			// is what keeps the concurrency bound true.
+			var exited <-chan struct{}
+			defer func() {
+				if exited != nil {
+					<-exited
+				}
+				if c.sem != nil {
+					<-c.sem
+				}
+			}()
 			defer c.bus.deliveries.done()
-			if c.sem != nil {
-				defer func() { <-c.sem }()
-			}
-			c.process(&d, pub)
+			exited = c.process(&d, pub)
 		}()
 	}
 	// The deliveries ended. A deliberate stop, a closed bus and a lost
@@ -413,7 +441,10 @@ func (c *consumer) bind(key string) error {
 
 // ---- per-delivery processing ---------------------------------------------------
 
-func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
+// process handles and settles one delivery. It returns once the delivery is
+// settled, with a channel closed when its handler goroutine exits (nil if no
+// handler ran), which can be later: see run.
+func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) (handlerExited <-chan struct{}) {
 	log := c.bus.log
 	if !c.spec.lateAck {
 		// Early ack: at most once. Retries and dead-lettering are impossible,
@@ -423,7 +454,7 @@ func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
 			// Running it here as well would break at-most-once.
 			log.LogAttrs(context.Background(), slog.LevelWarn, "early ack failed; leaving the message to its redelivery",
 				attrOperation("ack"), attrQueue(c.queueName()), attrCorrelationID(d.CorrelationId), attrSafeError(err))
-			return
+			return nil
 		}
 	}
 
@@ -442,7 +473,8 @@ func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
 	ctl := &deliveryControl{pub: pub, disarmed: make(chan struct{}), cancels: c.bus.cancels, id: d.CorrelationId, cancel: cancel}
 	defer ctl.release()
 	start := time.Now()
-	res := c.run(ctx, cancel, d, ctl)
+	exited := make(chan struct{})
+	res := c.run(ctx, cancel, d, ctl, exited)
 
 	switch cause := context.Cause(ctx); {
 	case errors.Is(cause, ErrCancelled):
@@ -453,23 +485,26 @@ func (c *consumer) process(d *amqp.Delivery, pub *pubChannel) {
 		}
 		log.LogAttrs(ctx, slog.LevelDebug, "delivery ended by its caller", attrOperation("consume"),
 			attrCorrelationID(d.CorrelationId), attrOutcome(outcomeCancelled), attrDuration(time.Since(start)))
-		return
+		return exited
 	case errors.Is(cause, ErrDisconnected), errors.Is(cause, ErrClosed):
 		// Its channel is gone; the broker redelivers it.
-		return
+		return exited
 	}
 	c.settle(d, pub, res)
+	return exited
 }
 
 // run executes the handler, racing it against the processing timeout. A
 // handler that overruns is abandoned, not stopped (Go cannot preempt it): its
-// context is cancelled, the attempt fails, and the goroutine is still counted
-// as running until it returns, so a drain does not report done while user
-// code is mid-transaction.
-func (c *consumer) run(ctx context.Context, cancel context.CancelCauseFunc, d *amqp.Delivery, ctl *deliveryControl) handlerResult {
+// context is cancelled and the attempt fails at once, but the goroutine is
+// still counted as running until it returns (exited is closed then), so a
+// drain does not report done, nor a handler slot free up, while user code is
+// mid-transaction.
+func (c *consumer) run(ctx context.Context, cancel context.CancelCauseFunc, d *amqp.Delivery, ctl *deliveryControl, exited chan<- struct{}) handlerResult {
 	done := make(chan handlerResult, 1)
 	c.bus.handlers.add()
 	go func() {
+		defer close(exited)
 		defer c.bus.handlers.done()
 		defer func() {
 			if v := recover(); v != nil {
@@ -633,18 +668,30 @@ func (c *consumer) replyError(pub *pubChannel, d *amqp.Delivery, body []byte) {
 	}
 }
 
-func originalRoutingKey(d *amqp.Delivery) string {
-	switch v := d.Headers[headerOriginalKey].(type) {
-	case string:
-		if v != "" {
-			return v
-		}
-	case []byte:
-		if len(v) > 0 {
-			return string(v)
-		}
+// originalRoutingKey is the key a retry or dead-letter copy is routed and
+// labelled with: the one the broker delivered this message on. The retry
+// topology preserves it on every hop (the retry exchange and the queue's
+// dead-lettering both keep the publish key), so it is the original route.
+// An incoming x-original-routing-key header is never consulted: a publisher
+// can set any header, and honouring it would let a failure republish the
+// message to a route the publisher could not reach itself, under this
+// service's broker permissions. The header is still written, for DLQ
+// tooling and the other ports.
+func originalRoutingKey(d *amqp.Delivery) string { return d.RoutingKey }
+
+// republishedHeaders copies a delivery's headers for a retry or dead-letter
+// copy, without the sender-selected distribution headers: RabbitMQ routes a
+// publish, and a dead-lettering without x-dead-letter-routing-key, to the CC
+// and BCC keys too, so a copy carrying the publisher's CC would fan out to
+// queues of the publisher's choosing.
+func republishedHeaders(d *amqp.Delivery) amqp.Table {
+	headers := maps.Clone(d.Headers)
+	if headers == nil {
+		headers = amqp.Table{}
 	}
-	return d.RoutingKey
+	delete(headers, "CC")
+	delete(headers, "BCC")
+	return headers
 }
 
 func firstFailure(d *amqp.Delivery) any {
@@ -662,10 +709,7 @@ func firstFailure(d *amqp.Delivery) any {
 // which is what makes it route to the service queue again.
 func (c *consumer) publishRetry(pub *pubChannel, d *amqp.Delivery, attempt int, cause error) error {
 	key := originalRoutingKey(d)
-	headers := maps.Clone(d.Headers)
-	if headers == nil {
-		headers = amqp.Table{}
-	}
+	headers := republishedHeaders(d)
 	headers[headerRetryCount] = intHeader(int64(attempt + 1))
 	headers[headerOriginalKey] = key
 	headers[headerFirstFailure] = firstFailure(d)
@@ -683,10 +727,7 @@ func (c *consumer) publishRetry(pub *pubChannel, d *amqp.Delivery, attempt int, 
 }
 
 func (c *consumer) publishDeadLetter(pub *pubChannel, d *amqp.Delivery, attempt int, cause error) error {
-	headers := maps.Clone(d.Headers)
-	if headers == nil {
-		headers = amqp.Table{}
-	}
+	headers := republishedHeaders(d)
 	headers[headerRetryCount] = intHeader(int64(attempt))
 	headers[headerOriginalKey] = originalRoutingKey(d)
 	headers[headerOriginalQueue] = c.queueName()

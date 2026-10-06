@@ -129,6 +129,14 @@ because `PublishError` unwraps to `Err`.
 `Ambiguous()` reports whether the broker may have stored the message anyway;
 see [Publish failures](#publish-failures).
 
+A publish that never left the process is not a `*PublishError`. If the
+context ends, or `PublishConfirmTimeout` passes, while the publish waits for
+a confirm slot or for the channel's send path, it fails with the context's
+error (an RPC deadline as `ErrRPCTimeout`) or a "publish not sent" error, and
+is never transmitted afterwards. That outcome is definite. Once the publish
+is committed to the transport, the context ending is ambiguous and reported
+in a `*PublishError`.
+
 ### Sentinels
 
 | Sentinel | Reported when |

@@ -235,7 +235,10 @@ handled it. Keeping the routing key means the same handlers match it again.
 The copies carry the headers of the service retry ladder (`x-retry-count`,
 `x-original-routing-key`, `x-first-failure-time`, `x-last-error`, and on the
 DLQ `x-original-queue` and `x-dlq-time`); see
-[Services](services.md#headers). As there, changing `Delay` on an existing
+[Services](services.md#headers). As there, a retry copy goes back on the
+routing key the event was delivered on, whatever headers the publisher set, so
+a failing handler cannot be made to redeliver the event to another
+subscription. As there, changing `Delay` on an existing
 retry queue fails `Start` with `ErrRetryQueueMismatch`.
 
 ### A retry re-runs every matching handler

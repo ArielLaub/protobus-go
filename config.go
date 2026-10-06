@@ -66,8 +66,10 @@ type Config struct {
 	// DefaultPrefetch bounds unacknowledged deliveries for consumers that set
 	// no concurrency of their own (event listeners). DEFAULT_PREFETCH
 	DefaultPrefetch int
-	// PublishConfirmTimeout bounds the wait for a broker confirm. Expiry is an
-	// AMBIGUOUS outcome. PUBLISH_CONFIRM_TIMEOUT_MS
+	// PublishConfirmTimeout bounds a publish's wait for a confirm slot and the
+	// send path (expiry: definite, nothing sent) and, separately, its wait for
+	// the write and the broker's confirm (expiry: AMBIGUOUS).
+	// PUBLISH_CONFIRM_TIMEOUT_MS
 	PublishConfirmTimeout time.Duration
 	// Heartbeat is the AMQP heartbeat interval, which bounds how long a dead
 	// peer goes unnoticed. A `heartbeat` parameter in the broker URL wins, and
@@ -80,7 +82,9 @@ type Config struct {
 	// CONNECTION_READY_TIMEOUT_MS
 	ConnectionReadyTimeout time.Duration
 	// MaxOutstandingConfirms bounds unconfirmed publishes per channel, at most
-	// 65535; further publishes wait for a slot. MAX_OUTSTANDING_CONFIRMS
+	// 65535; further publishes wait for a slot. A publish keeps its slot until
+	// the broker settles it or the channel closes, even after its caller
+	// stopped waiting. MAX_OUTSTANDING_CONFIRMS
 	MaxOutstandingConfirms int
 
 	// Streaming caller buffer bounds. Crossing one fails the stream with
