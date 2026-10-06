@@ -8,7 +8,7 @@ Services and clients in every language can share one broker, one schema and
 even one queue: replicas of a service in different languages compete for its
 requests and climb one retry ladder together.
 
-This is tested, not assumed. See [Testing](testing.md#cross-language) for the
+This is tested. See [Testing](testing.md#cross-language) for the
 suite that runs Go against the TypeScript and Python ports' real libraries
 over a real broker, in both directions. The C++ port's own suite runs it
 against the TypeScript, Python and Go ports.

@@ -46,7 +46,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its delivery had timed out left a cancel registration behind for good;
   registration and release now follow one lifecycle, safe in either order.
 
-## [2.0.0] — 2026-10-04
+## [2.0.0] - 2026-10-04
 
 protobus-go v2 is a rewrite from scratch, published under a new module path:
 
@@ -169,7 +169,7 @@ you migrate.
   `HeaderProtobusSeq` are no longer exported.
 - Go 1.25 or newer is required.
 
-## [1.4.0] — 2026-06-04
+## [1.4.0] - 2026-06-04
 
 ### Added
 

@@ -12,7 +12,7 @@ Define a service in a `.proto` file, implement the interface protobus
 generates for it, and call it from anywhere on the bus as if it were local.
 ProtoBus turns each service into **one durable RabbitMQ queue with N processes
 competing for it**, so load balancing, failover, backpressure, retries and
-dead-lettering are the broker's job, not your program's.
+dead-lettering are handled by the broker.
 
 This is the Go port of protobus. The ports are **wire-compatible**: a service
 written in one language serves callers in all the others, with streaming,
@@ -64,9 +64,9 @@ queue while you rewrite it.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 
-### Thin by design
+### A small protocol
 
-ProtoBus is a convention, not a platform. There is no server, sidecar,
+ProtoBus is a convention for using RabbitMQ. There is no server, sidecar,
 registry or code running on the broker. The protocol has three parts:
 
 - **RabbitMQ topology:** four exchanges and a queue per service, with plain
@@ -81,7 +81,7 @@ protobuf library to join the bus. [Compatibility](docs/compatibility.md)
 documents the whole contract: the topology, envelopes, headers and type
 mapping.
 
-Compatibility is tested, not assumed. This repository's CI runs Go against the
+Compatibility is tested: this repository's CI runs Go against the
 TypeScript and Python ports' real libraries, over a real broker, in both
 directions. The C++ port's CI does the same against TypeScript, Python and Go.
 
@@ -428,7 +428,7 @@ for tok, err := range assistant.Generate(ctx, &chat.GenerateRequest{Prompt: "hi"
 
 ## Concurrency
 
-Each unacknowledged delivery runs on its own goroutine, so handlers run truly
+Each unacknowledged delivery runs on its own goroutine, so handlers run
 in parallel and must be safe for concurrent use. The number in flight is
 bounded by the consumer's prefetch: `WithMaxConcurrent` for a service (default
 1, one request at a time), `WithEventConcurrency` for event handling (default
@@ -527,4 +527,4 @@ how to run it are described in [Testing](docs/testing.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

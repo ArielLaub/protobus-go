@@ -185,7 +185,7 @@ first service starts), hears every cancel, and acts only on the correlation
 ids it is serving. It cancels every copy of the request it holds, in case a
 redelivery overlaps the original.
 
-Cancellation is best effort by design:
+Cancellation is deliberately best effort:
 
 - It is sent at most once per call, detached from the caller's context (often
   the reason the stream ended) and bounded by the sooner of
