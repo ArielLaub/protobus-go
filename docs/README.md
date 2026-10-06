@@ -1,9 +1,26 @@
 # protobus-go documentation
 
 protobus-go runs request/response calls, server streams and published events
-over RabbitMQ, with Protocol Buffers on the wire. It is wire-compatible with
-the TypeScript and Python ports. New here? Start with
-[Getting Started](getting-started.md).
+over RabbitMQ, with Protocol Buffers on the wire. It is one of four
+wire-compatible ports (TypeScript, Python, Go and C++), so each service can be
+written in the language that suits it and still call, and be called by, all
+the others. See [One bus, any language](../README.md#one-bus-any-language). New
+here? Start with [Getting Started](getting-started.md).
+
+## Other languages
+
+The `.proto` files are the contract and RabbitMQ does the routing, so a port
+needs only protobuf and an AMQP client.
+
+| Language | Repo | Status |
+|---|---|---|
+| TypeScript | [protobus](https://github.com/ArielLaub/protobus) | stable (reference) |
+| Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
+| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
+| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
+
+This repository's CI runs Go against the TypeScript and Python ports' real
+libraries, in both directions; see [Compatibility](compatibility.md).
 
 ## Guides
 
@@ -30,7 +47,7 @@ the TypeScript and Python ports. New here? Start with
 |---|---|
 | [Security](security.md) | what `actor` does and does not prove, exposing internal errors, broker credentials |
 | [Migration](migration.md) | upgrading from protobus-go v1 to v2 |
-| [Compatibility](compatibility.md) | interoperating with TypeScript and Python: type mapping, topology, deliberate differences |
+| [Compatibility](compatibility.md) | the shared protocol, and interoperating with TypeScript, Python and C++: type mapping, topology, deliberate differences |
 
 ## Elsewhere
 

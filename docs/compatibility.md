@@ -1,15 +1,23 @@
-# Compatibility with the TypeScript and Python ports
+# Compatibility with the other ports
 
 protobus-go speaks the protobus wire protocol exactly as
-[protobus](https://github.com/ArielLaub/protobus) (TypeScript, 2.5) and
-[protobus-py](https://github.com/ArielLaub/protobus-py) (2.0) do. Services and
-clients in all three languages can share one broker, one schema and even one
-queue: replicas of a service in different languages compete for its requests
-and climb one retry ladder together.
+[protobus](https://github.com/ArielLaub/protobus) (TypeScript, 2.5),
+[protobus-py](https://github.com/ArielLaub/protobus-py) (2.0) and
+[protobus-cpp](https://github.com/ArielLaub/protobus-cpp) (C++, 2.0) do.
+Services and clients in every language can share one broker, one schema and
+even one queue: replicas of a service in different languages compete for its
+requests and climb one retry ladder together.
 
 This is tested, not assumed. See [Testing](testing.md#cross-language) for the
-suite that runs Go against the other ports' real libraries over a real broker,
-in both directions.
+suite that runs Go against the TypeScript and Python ports' real libraries
+over a real broker, in both directions. The C++ port's own suite runs it
+against the TypeScript, Python and Go ports.
+
+This page is also the contract for anyone porting protobus to another
+language: the topology, envelopes, headers and settlement behaviour below are
+the whole protocol. The protocol is deliberately small, plain AMQP 0-9-1 and
+protobuf with no server or sidecar, so a new port needs only an AMQP client
+and a protobuf library.
 
 ## The contract is the `.proto`
 
