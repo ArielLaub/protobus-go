@@ -1,7 +1,7 @@
 # ProtoBus for Go
 
 **RabbitMQ-native microservices for Go, with Protocol Buffers on the wire, and
-one bus shared by Go, TypeScript, Python and C++.**
+one bus shared by Go, TypeScript, Python, C++ and Java.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ArielLaub/protobus-go/v2.svg)](https://pkg.go.dev/github.com/ArielLaub/protobus-go/v2)
 [![go](https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -63,6 +63,7 @@ queue while you rewrite it.
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
+| Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
 
 ### A small protocol
 
@@ -83,7 +84,8 @@ mapping.
 
 Compatibility is tested: this repository's CI runs Go against the
 TypeScript and Python ports' real libraries, over a real broker, in both
-directions. The C++ port's CI does the same against TypeScript, Python and Go.
+directions. The C++ port's CI does the same against TypeScript, Python and Go,
+and the Java port's against all four.
 
 ---
 
@@ -444,7 +446,7 @@ one bus per process and share it.
 ## Wire compatibility
 
 protobus-go speaks the protobus wire protocol exactly as TypeScript protobus
-2.5, protobus-py 2.0 and protobus-cpp 2.0 do: the same exchanges, queues, envelopes, headers and
+2.5, protobus-py 2.0, protobus-cpp 2.0 and protobus-java 2.0 do: the same exchanges, queues, envelopes, headers and
 error codes, and the same environment variables for configuration. Replicas of
 one service in different languages can share its queue and climb one retry
 ladder together. A cross-language suite runs Go against the other ports' real
@@ -478,7 +480,7 @@ Full index: **[docs/](docs/README.md)**
 |---|---|
 | [Security](docs/security.md) | what `actor` does and does not prove, error exposure |
 | [Migration](docs/migration.md) | upgrading from protobus-go v1 |
-| [Compatibility](docs/compatibility.md) | the shared protocol; interoperating with TypeScript, Python and C++ |
+| [Compatibility](docs/compatibility.md) | the shared protocol; interoperating with TypeScript, Python, C++ and Java |
 
 Reference documentation for every exported identifier is on
 [pkg.go.dev](https://pkg.go.dev/github.com/ArielLaub/protobus-go/v2), or
