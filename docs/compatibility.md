@@ -1,19 +1,17 @@
 # Compatibility with the other ports
 
-protobus-go speaks the protobus wire protocol exactly as
-[protobus](https://github.com/ArielLaub/protobus) (TypeScript, 2.5),
-[protobus-py](https://github.com/ArielLaub/protobus-py) (2.0),
-[protobus-cpp](https://github.com/ArielLaub/protobus-cpp) (C++, 2.0) and
-[protobus-java](https://github.com/ArielLaub/protobus-java) (Java, 2.0) do.
+protobus-go speaks the protobus wire protocol exactly as the TypeScript
+reference (2.5) and the other ports (2.0) do; they are listed under
+[Other languages](README.md#other-languages).
 Services and clients in every language can share one broker, one schema and
 even one queue: replicas of a service in different languages compete for its
 requests and climb one retry ladder together.
 
 This is tested. See [Testing](testing.md#cross-language) for the
 suite that runs Go against the TypeScript and Python ports' real libraries
-over a real broker, in both directions. The C++ port's own suite runs it
-against the TypeScript, Python and Go ports, and the Java port's against all
-four.
+over a real broker, in both directions. Each port since has a suite of its
+own that runs it, the same way, against the ports that came before it, this
+one included.
 
 This page is also the contract for anyone porting protobus to another
 language: the topology, envelopes, headers and settlement behaviour below are

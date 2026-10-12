@@ -19,6 +19,8 @@ needs only protobuf and an AMQP client.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 This repository's CI runs Go against the TypeScript and Python ports' real
 libraries, in both directions; see [Compatibility](compatibility.md).

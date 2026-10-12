@@ -64,6 +64,8 @@ queue while you rewrite it.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 ### A small protocol
 
@@ -446,7 +448,7 @@ one bus per process and share it.
 ## Wire compatibility
 
 protobus-go speaks the protobus wire protocol exactly as TypeScript protobus
-2.5, protobus-py 2.0, protobus-cpp 2.0 and protobus-java 2.0 do: the same exchanges, queues, envelopes, headers and
+2.5 and the other ports [listed above](#one-bus-any-language) do: the same exchanges, queues, envelopes, headers and
 error codes, and the same environment variables for configuration. Replicas of
 one service in different languages can share its queue and climb one retry
 ladder together. A cross-language suite runs Go against the other ports' real
