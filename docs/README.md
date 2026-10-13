@@ -4,7 +4,7 @@ protobus-go runs request/response calls, server streams and published events
 over RabbitMQ, with Protocol Buffers on the wire. It is one of five
 wire-compatible ports (TypeScript, Python, Go, C++ and Java), so each service can be
 written in the language that suits it and still call, and be called by, all
-the others. See [One bus, any language](../README.md#one-bus-any-language). New
+the others. See [Wire compatibility](../README.md#wire-compatibility). New
 here? Start with [Getting Started](getting-started.md).
 
 ## Other languages
@@ -19,6 +19,8 @@ needs only protobuf and an AMQP client.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 This repository's CI runs Go against the TypeScript and Python ports' real
 libraries, in both directions; see [Compatibility](compatibility.md).

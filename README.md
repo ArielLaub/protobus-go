@@ -1,7 +1,10 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ArielLaub/protobus-go/main/docs/assets/banner.jpg" alt="ProtoBus: many languages, one message bus. A thin layer over Protocol Buffers and RabbitMQ." width="100%">
+</p>
+
 # ProtoBus for Go
 
-**RabbitMQ-native microservices for Go, with Protocol Buffers on the wire, and
-one bus shared by Go, TypeScript, Python, C++ and Java.**
+**RabbitMQ-native microservices for Go, with Protocol Buffers on the wire.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ArielLaub/protobus-go/v2.svg)](https://pkg.go.dev/github.com/ArielLaub/protobus-go/v2)
 [![go](https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -14,78 +17,16 @@ ProtoBus turns each service into **one durable RabbitMQ queue with N processes
 competing for it**, so load balancing, failover, backpressure, retries and
 dead-lettering are handled by the broker.
 
-This is the Go port of protobus. The ports are **wire-compatible**: a service
-written in one language serves callers in all the others, with streaming,
-events, custom types and error codes included. Write each service in the
-language that suits it, and they still form one system.
+This is the Go port of [protobus](https://github.com/ArielLaub/protobus)
+(TypeScript). The ports are **wire-compatible**: a service written in one
+language serves callers in all the others, with streaming, events, custom
+types and error codes included. Write each service in the language that suits
+it, and they still form one system. The ports are listed under
+[Wire compatibility](#wire-compatibility).
 
 **Status: stable.** Since v2.0.0 the Go port is no longer experimental: it is at
 parity with the TypeScript and Python ports, and every commit runs all three
 against each other, in both directions, on RabbitMQ 3 and 4.
-
----
-
-## One bus, any language
-
-ProtoBus exists so that a system can be built from services in different
-languages without paying for it in glue code. A typical deployment:
-
-```mermaid
-flowchart LR
-    web["Web server<br/>(TypeScript)"]
-    ai["AI service<br/>(Python)"]
-    ocr["OCR service<br/>(C++)"]
-    chain["Blockchain connector<br/>(Go)"]
-    aux["Auxiliary services<br/>(any port)"]
-    bus(("RabbitMQ<br/>one .proto contract"))
-    web <--> bus
-    ai <--> bus
-    ocr <--> bus
-    chain <--> bus
-    aux <--> bus
-```
-
-- The **AI service** is written in Python, next to its models and libraries.
-- The CPU-heavy **OCR service** is written in C++.
-- The **blockchain connector** is written in Go, for its concurrency and its
-  chain clients.
-- The **web server** and the auxiliary services are written in TypeScript,
-  running on Node.js or Bun.
-
-They share one `.proto` contract and call one another as typed RPCs, streams
-and events. None of them knows, or needs to know, what language the others
-are written in. A service can even run replicas in two languages on the same
-queue while you rewrite it.
-
-| Language | Repo | Status |
-|---|---|---|
-| TypeScript | [protobus](https://github.com/ArielLaub/protobus) | stable (reference) |
-| Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
-| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
-| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
-| Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
-
-### A small protocol
-
-ProtoBus is a convention for using RabbitMQ. There is no server, sidecar,
-registry or code running on the broker. The protocol has three parts:
-
-- **RabbitMQ topology:** four exchanges and a queue per service, with plain
-  AMQP 0-9-1 routing.
-- **Envelopes:** five small protobuf messages, for requests, responses
-  (results and errors) and events.
-- **Headers:** a handful of them, for retries, dead-lettering and streaming.
-
-Everything else is the broker's job. A port is therefore small. The Go wire
-codec is about 300 lines, and a new language needs only an AMQP client and a
-protobuf library to join the bus. [Compatibility](docs/compatibility.md)
-documents the whole contract: the topology, envelopes, headers and type
-mapping.
-
-Compatibility is tested: this repository's CI runs Go against the
-TypeScript and Python ports' real libraries, over a real broker, in both
-directions. The C++ port's CI does the same against TypeScript, Python and Go,
-and the Java port's against all four.
 
 ---
 
@@ -155,7 +96,7 @@ message DivideResponse {
 
 The package plus the service name is the service's name on the bus:
 `Calculator.Service`. The file is an ordinary protobus schema, shared as-is
-with TypeScript and Python. It needs no `go_package` option.
+with the other languages. It needs no `go_package` option.
 
 ### 2. Generate the Go code
 
@@ -319,8 +260,19 @@ framework instead. That is a real feature and protobus does not have it.
 - **Usually smaller on the wire**, since fields travel as numbers and packed
   binary rather than text.
 
-### Few dependencies
+### A small protocol, a small port
 
+ProtoBus is a convention for using RabbitMQ. There is no server, sidecar,
+registry or code running on the broker. The protocol has three parts:
+
+- **RabbitMQ topology:** four exchanges and a queue per service, with plain
+  AMQP 0-9-1 routing.
+- **Envelopes:** five small protobuf messages, for requests, responses
+  (results and errors) and events.
+- **Headers:** a handful of them, for retries, dead-lettering and streaming.
+
+Everything else is the broker's job. A port is therefore small: the Go wire
+codec is about 300 lines, and this port depends on
 [`amqp091-go`](https://github.com/rabbitmq/amqp091-go) for AMQP,
 [`protobuf`](https://pkg.go.dev/google.golang.org/protobuf) for the wire, and
 [`protocompile`](https://github.com/bufbuild/protocompile) to compile schemas
@@ -446,11 +398,22 @@ one bus per process and share it.
 ## Wire compatibility
 
 protobus-go speaks the protobus wire protocol exactly as TypeScript protobus
-2.5, protobus-py 2.0, protobus-cpp 2.0 and protobus-java 2.0 do: the same exchanges, queues, envelopes, headers and
+2.5 and the other ports do: the same exchanges, queues, envelopes, headers and
 error codes, and the same environment variables for configuration. Replicas of
 one service in different languages can share its queue and climb one retry
 ladder together. A cross-language suite runs Go against the other ports' real
-libraries over a real broker, in both directions.
+libraries over a real broker, in both directions; see
+[Testing](docs/testing.md).
+
+| Language | Repo | Status |
+|---|---|---|
+| TypeScript | [protobus](https://github.com/ArielLaub/protobus) | stable (reference) |
+| Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
+| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) (this repository) | stable |
+| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
+| Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 The type mapping, the topology and the few deliberate behavioural differences
 are in **[Compatibility](docs/compatibility.md)**.
@@ -480,7 +443,7 @@ Full index: **[docs/](docs/README.md)**
 |---|---|
 | [Security](docs/security.md) | what `actor` does and does not prove, error exposure |
 | [Migration](docs/migration.md) | upgrading from protobus-go v1 |
-| [Compatibility](docs/compatibility.md) | the shared protocol; interoperating with TypeScript, Python, C++ and Java |
+| [Compatibility](docs/compatibility.md) | the shared protocol; interoperating with the other ports |
 
 Reference documentation for every exported identifier is on
 [pkg.go.dev](https://pkg.go.dev/github.com/ArielLaub/protobus-go/v2), or
@@ -490,42 +453,21 @@ locally with `go doc -all github.com/ArielLaub/protobus-go/v2`.
 
 ## Examples
 
+| Example | Shows |
+|---|---|
+| [`examples/calculator`](examples/calculator) | A service, a client, a handled error and an event |
+| [`examples/tokenstream`](examples/tokenstream) | Streaming tokens, cancelled three ways, with the server's own count |
+| [`examples/combat`](examples/combat) | Six instances of one service playing a game over RPC and events |
+
 ```bash
 docker compose up -d --wait                       # RabbitMQ on 127.0.0.1:25672
 export AMQP_URL=amqp://guest:guest@127.0.0.1:25672/
-go run ./examples/calculator                      # RPC, a handled error, an event
-go run ./examples/tokenstream                     # streaming, and three ways to cancel it
-go run ./examples/combat                          # six service instances fight over the bus
+go run ./examples/calculator
+go run ./examples/tokenstream
+go run ./examples/combat
 ```
-
-- [`examples/calculator`](examples/calculator): the quick start, with an event.
-- [`examples/tokenstream`](examples/tokenstream): streams tokens like a
-  language model, and shows cancellation stopping the producer, not just the
-  reader.
-- [`examples/combat`](examples/combat): a battle royale of `Combat.Player`
-  instances (`WithInstance`) shooting each other over RPC and coordinating
-  through events.
 
 ---
-
-## Requirements
-
-- Go 1.25+
-- RabbitMQ 3.8+
-
-## Development
-
-```bash
-go test ./...                                     # unit suite, no broker needed
-docker compose up -d --wait
-export PROTOBUS_TEST_AMQP_URL=amqp://guest:guest@127.0.0.1:25672/
-export PROTOBUS_TEST_MGMT_URL=http://guest:guest@127.0.0.1:25673
-go test ./...                                     # adds the integration suites
-```
-
-The broker in `docker-compose.yml` deliberately avoids ports 5672 and 15672,
-because the suites declare and delete queues. The cross-language suite and
-how to run it are described in [Testing](docs/testing.md).
 
 ## License
 
