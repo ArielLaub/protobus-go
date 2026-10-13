@@ -4,7 +4,7 @@ protobus-go runs request/response calls, server streams and published events
 over RabbitMQ, with Protocol Buffers on the wire. It is one of five
 wire-compatible ports (TypeScript, Python, Go, C++ and Java), so each service can be
 written in the language that suits it and still call, and be called by, all
-the others. See [One bus, any language](../README.md#one-bus-any-language). New
+the others. See [Wire compatibility](../README.md#wire-compatibility). New
 here? Start with [Getting Started](getting-started.md).
 
 ## Other languages
